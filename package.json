@@ -1,0 +1,21 @@
+{
+  "name": "poom22g",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "login": "clasp login",
+    "create": "clasp create --type standalone --rootDir src",
+    "clone": "clasp clone",
+    "push": "clasp push",
+    "watch": "clasp push --watch",
+    "pull": "clasp pull",
+    "open": "clasp open",
+    "deploy": "clasp deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2",
+    "@types/google-apps-script": "^1.0.83",
+    "typescript": "^5.4.5"
+  }
+}
