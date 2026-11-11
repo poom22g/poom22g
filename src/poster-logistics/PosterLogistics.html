@@ -1,0 +1,802 @@
+<!-- =====================================================================
+ Poster Logistics — เฟส ค: หน้าจอ (ฝังในแท็บ 🛠️ Poster กำลังจะติด ของ Dashboard)
+ Dashboard โหลดไฟล์นี้ผ่าน plGetUi() แล้วเรียก PLX.mount(กล่อง, { back }) · ใช้ธีม/คลาสเดิม (bl-card, bl-chip, bl-vseg)
+ ฝั่งหน้าจอแค่ซ่อน/แสดงปุ่ม — สิทธิ์จริงตรวจที่ server ทุกครั้ง
+===================================================================== -->
+<style>
+  .plx { display:flex; flex-direction:column; gap:12px; color:var(--ink); }
+  .plx * { box-sizing:border-box; }
+  .plx-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .plx-who { font-size:13px; color:var(--text-dim); margin-top:2px; }
+  .plx-src { font-size:12px; color:var(--text-faint); margin-top:2px; }
+  .plx-src.cache { color:var(--status-watch); }
+  .plx-hbtns { display:flex; gap:8px; flex-wrap:wrap; }
+  .plx-btn { min-height:36px; padding:0 14px; border-radius:10px; border:1px solid var(--border); background:#fff; color:var(--accent-strong); font:inherit; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+  .plx-btn:hover { background:var(--card-hover); }
+  .plx-btn.pri { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .plx-btn.pri:hover { background:var(--accent-strong); }
+  .plx-btn.warn { background:#fff4e0; border-color:#e8b45c; color:#7a4a00; }
+  .plx-btn.danger { background:#fdecea; border-color:#e6a39b; color:#a12a1d; }
+  .plx-btn[disabled] { opacity:.55; cursor:default; }
+  .plx-test { background:#fff4e0; border:1px solid #e8b45c; color:#7a4a00; border-radius:10px; padding:8px 12px; font-size:13px; font-weight:600; }
+  .plx-bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .plx-bar select, .plx-bar input { height:36px; border:1px solid var(--border); border-radius:10px; padding:0 10px; font:inherit; font-size:13px; background:#fff; color:var(--ink); }
+  .plx-bar input[type=search] { flex:1 1 200px; min-width:160px; }
+  .plx-chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .plx-chips .bl-chip { padding:6px 10px; font-size:12.5px; }
+  .plx-chips .bl-chip b { font-weight:700; }
+  .plx-dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex:0 0 auto; }
+  .plx-g { background:#2e9d5b; } .plx-y { background:#e0a100; } .plx-r { background:#d33a2c; } .plx-n { background:#b8c4d4; }
+  .plx-grp { border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .plx-gh { background:var(--bg-soft); padding:8px 12px; font-size:13px; font-weight:700; display:flex; justify-content:space-between; gap:8px; }
+  .plx-gh span { font-weight:500; color:var(--text-dim); }
+  .plx-job { display:grid; grid-template-columns: 14px minmax(150px,1.2fr) minmax(170px,1fr) minmax(220px,1.4fr) auto; gap:10px; align-items:center; padding:10px 12px; border-top:1px solid var(--border); cursor:pointer; background:#fff; }
+  .plx-job:first-of-type { border-top:0; }
+  .plx-gh + .plx-job { border-top:0; }
+  .plx-job:hover { background:var(--card-hover); }
+  .plx-job.sel { background:linear-gradient(var(--accent-soft),var(--accent-soft)),#fff; box-shadow:inset 3px 0 0 var(--accent); }
+  .plx-sign { font-weight:700; font-size:14px; }
+  .plx-sub { font-size:12px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .plx-steps { display:flex; gap:3px; }
+  .plx-steps i { flex:1 1 0; height:6px; border-radius:3px; background:#dfe7f2; }
+  .plx-steps i.d { background:#2e9d5b; } .plx-steps i.w { background:#e0a100; } .plx-steps i.x { background:#d33a2c; }
+  .plx-stl { display:flex; gap:3px; font-size:10.5px; color:var(--text-faint); margin-top:3px; }
+  .plx-stl span { flex:1 1 0; text-align:center; }
+  .plx-dates { font-size:12px; color:var(--text-dim); display:flex; gap:10px; flex-wrap:wrap; }
+  .plx-dates b { color:var(--ink); font-weight:600; }
+  .plx-pill { display:inline-block; font-size:11.5px; font-weight:700; border-radius:999px; padding:3px 9px; white-space:nowrap; background:#eef2f7; color:var(--text-dim); }
+  .plx-pill.s-wait { background:#fff4e0; color:#7a4a00; } .plx-pill.s-red { background:#fdecea; color:#a12a1d; }
+  .plx-pill.s-go { background:#e6f0fb; color:#15539f; } .plx-pill.s-ok { background:#e5f5ec; color:#1d6b3f; }
+  .plx-pill.s-none { background:#f2f4f7; color:#8397b0; }
+  .plx-right { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  .plx-flag { font-size:11px; font-weight:700; color:#a12a1d; }
+  .plx-empty { padding:24px; text-align:center; color:var(--text-dim); font-size:14px; }
+  .plx-sec { font-size:13px; font-weight:700; color:var(--text-dim); margin:4px 2px; }
+  /* ปฏิทิน */
+  .plx-cal { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:4px; }
+  .plx-cal .dh { font-size:12px; font-weight:700; color:var(--text-dim); text-align:center; padding:4px 0; }
+  .plx-day { min-height:92px; border:1px solid var(--border); border-radius:8px; padding:4px; background:#fff; display:flex; flex-direction:column; gap:3px; }
+  .plx-day.out { background:#f6f8fb; opacity:.6; }
+  .plx-day.today { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .plx-day .dn { font-size:11.5px; font-weight:700; color:var(--text-dim); }
+  .plx-ev { font-size:11px; border-radius:6px; padding:2px 5px; background:var(--bg-soft); cursor:pointer; display:flex; gap:4px; align-items:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .plx-ev.ad { background:#fff; border:1px dashed var(--border); color:var(--text-dim); }
+  /* แผงรายละเอียด */
+  .plx-back { position:fixed; inset:0; background:rgba(6,16,30,.45); z-index:9300; display:none; }
+  .plx-drawer { position:fixed; top:0; right:0; bottom:0; width:460px; max-width:100vw; background:#fff; z-index:9310; box-shadow:-10px 0 30px rgba(8,26,50,.35); transform:translateX(105%); transition:transform .2s ease; display:flex; flex-direction:column; color:var(--ink); }
+  .plx-open .plx-back { display:block; }
+  .plx-open .plx-drawer { transform:none; }
+  .plx-dh { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 16px; border-bottom:1px solid var(--border); }
+  .plx-dh .t { font-size:17px; font-weight:700; }
+  .plx-db { flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding:14px 16px 24px; display:flex; flex-direction:column; gap:14px; -webkit-overflow-scrolling:touch; }
+  .plx-x { width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:#fff; font-size:16px; cursor:pointer; color:var(--ink); }
+  .plx-kv { display:grid; grid-template-columns:118px 1fr; gap:6px 10px; font-size:13px; }
+  .plx-kv dt { color:var(--text-dim); }
+  .plx-kv dd { margin:0; word-break:break-word; white-space:pre-line; }
+  .plx-box { border:1px solid var(--border); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .plx-box h4 { margin:0; font-size:14px; }
+  .plx-f { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+  .plx-f > span { color:var(--text-dim); }
+  .plx-f input[type=text], .plx-f input[type=date], .plx-f select, .plx-f textarea { min-height:40px; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font:inherit; font-size:14px; color:var(--ink); background:#fff; width:100%; }
+  .plx-f textarea { min-height:64px; resize:vertical; }
+  .plx-f .req { color:#d33a2c; }
+  .plx-row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .plx-check { font-size:12.5px; border-radius:10px; padding:8px 10px; }
+  .plx-check.green { background:#e5f5ec; color:#1d6b3f; } .plx-check.yellow { background:#fff4e0; color:#7a4a00; } .plx-check.red { background:#fdecea; color:#a12a1d; }
+  .plx-seg2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .plx-seg2 label { min-height:48px; border:1px solid var(--border); border-radius:10px; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:700; cursor:pointer; }
+  .plx-seg2 input { position:absolute; opacity:0; pointer-events:none; }
+  .plx-seg2 label.on.ok { background:#e5f5ec; border-color:#2e9d5b; color:#1d6b3f; }
+  .plx-seg2 label.on.bad { background:#fdecea; border-color:#d33a2c; color:#a12a1d; }
+  .plx-cl label { display:flex; gap:8px; align-items:center; min-height:36px; font-size:14px; }
+  .plx-cl input { width:20px; height:20px; }
+  .plx-photos { display:flex; gap:6px; flex-wrap:wrap; }
+  .plx-photos a, .plx-photos .ph { width:72px; height:72px; border-radius:8px; border:1px solid var(--border); background:#f2f4f7 center/cover no-repeat; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--text-dim); text-decoration:none; position:relative; overflow:hidden; }
+  .plx-photos .ph button { position:absolute; top:2px; right:2px; width:22px; height:22px; border-radius:50%; border:0; background:rgba(0,0,0,.6); color:#fff; font-size:12px; cursor:pointer; }
+  .plx-pick { min-height:48px; border:1px dashed var(--accent); border-radius:10px; display:flex; align-items:center; justify-content:center; gap:6px; color:var(--accent-strong); font-weight:700; cursor:pointer; }
+  .plx-pick input { display:none; }
+  .plx-msg { border-radius:10px; padding:10px 12px; font-size:13px; }
+  .plx-msg.err { background:#fdecea; color:#a12a1d; border:1px solid #e6a39b; }
+  .plx-msg.ok { background:#e5f5ec; color:#1d6b3f; border:1px solid #9fd3b3; }
+  .plx-msg.warn { background:#fff4e0; color:#7a4a00; border:1px solid #e8b45c; }
+  .plx-hist { display:flex; flex-direction:column; gap:6px; font-size:12px; }
+  .plx-hist div { border-left:3px solid var(--border); padding:2px 8px; overflow-wrap:anywhere; }
+  .plx-hist .a { font-weight:700; color:var(--ink); }
+  .plx-hist .m { color:var(--text-faint); }
+  .plx-toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#10294a; color:#fff; padding:10px 16px; border-radius:10px; font-size:14px; z-index:9400; box-shadow:0 6px 18px rgba(0,0,0,.3); max-width:90vw; display:none; }
+  .plx-act { display:flex; flex-direction:column; gap:8px; }
+  .plx-act .plx-btn { min-height:44px; font-size:14px; }
+
+  /* แท็บเล็ต: ตัดคอลัมน์วันที่ลงบรรทัดใหม่ */
+  @media (max-width: 1100px) {
+    .plx-job { grid-template-columns: 14px minmax(140px,1fr) minmax(160px,1fr) auto; }
+    .plx-job .plx-dates { grid-column: 2 / 4; }
+  }
+  /* มือถือ: การ์ดเต็มความกว้าง ปุ่มใหญ่ ≥ 44px ไม่ย่อตาราง */
+  @media (max-width: 700px) {
+    .plx-job { grid-template-columns: 12px 1fr; gap:6px 10px; padding:12px; }
+    .plx-job > * { grid-column: 2; }
+    .plx-job > .plx-dot { grid-column:1; grid-row:1; margin-top:6px; }
+    .plx-job .plx-dates { grid-column: 2; }
+    .plx-right { flex-direction:row; justify-content:space-between; align-items:center; }
+    .plx-right .plx-btn { min-height:44px; padding:0 16px; font-size:14px; }
+    .plx-btn { min-height:44px; }
+    .plx-bar select, .plx-bar input { height:44px; font-size:15px; }
+    .plx-bar select { flex:1 1 40%; }
+    .plx-drawer { width:100vw; }
+    .plx-kv { grid-template-columns:100px 1fr; }
+    .plx-row2 { grid-template-columns:1fr; }
+    .plx-f input[type=text], .plx-f input[type=date], .plx-f select, .plx-f textarea { font-size:16px; min-height:44px; }
+    .plx-cal { display:flex; flex-direction:column; }
+    .plx-cal .dh, .plx-day.out, .plx-day.empty { display:none; }
+    .plx-day { min-height:0; }
+    .plx-ev { font-size:13px; padding:8px; white-space:normal; }
+    .plx-vseg-wrap { overflow-x:auto; }
+  }
+</style>
+
+<script>
+(function () {
+  "use strict";
+  var PLX = window.PLX = {};
+  var root, opts = {}, D = null, fromCache = false, loading = false, me = { role: "" };
+  var view = "mine", month = "", stage = "", q = "", actAs = "";
+  var cur = null, curHist = null, curSuggest = null, sending = false, pendPhotos = {};
+  var curMsg = null; // ข้อความผลบันทึกล่าสุด · คงไว้ตอนวาดลิ้นชักใหม่ (กันหน้าเลื่อนแล้วกดพลาด)
+  var CACHE_KEY = "plx_cache_v1";
+  var MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+  var DOW = ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."];
+  var ERR_TEXT = {
+    FORBIDDEN: "คุณไม่มีสิทธิ์ทำรายการนี้", BAD_STATE: "สถานะงานเปลี่ยนไปแล้ว ทำรายการนี้ไม่ได้",
+    CONFLICT: "มีคนแก้งานนี้ไปก่อนแล้ว", NEED_REASON: "ต้องใส่เหตุผล", INVALID: "ข้อมูลไม่ถูกต้อง",
+    OLD_ROW: "งานเดือนเก่า ระบบไม่แก้", NOT_FOUND: "ไม่พบงานนี้ในชีตแล้ว", AMBIGUOUS: "พบงานซ้ำหลายแถว",
+    BUSY: "มีคนกำลังบันทึกอยู่ ลองใหม่อีกครั้ง"
+  };
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function $(sel, el) { return (el || root).querySelector(sel); }
+  function $$(sel, el) { return Array.prototype.slice.call((el || root).querySelectorAll(sel)); }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function todayKey() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function addDaysKey(k, n) { var p = k.split("-"); var d = new Date(+p[0], +p[1] - 1, +p[2] + n, 12); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function dayDiff(a, b) { var pa = a.split("-"), pb = b.split("-"); return Math.round((new Date(+pb[0], +pb[1] - 1, +pb[2], 12) - new Date(+pa[0], +pa[1] - 1, +pa[2], 12)) / 864e5); }
+  function th(k) { if (!k) return "–"; var p = k.split("-"); return (+p[2]) + " " + MON[+p[1] - 1]; }
+  function thMonth(mk) { var p = mk.split("-"); return MON[+p[1] - 1] + " " + (+p[0] + 543); }
+  function S() { return D ? D.status : {}; }
+
+  // บทบาทที่ใช้แสดงผล: Admin เลือก "ดูในฐานะ" ได้ (แค่มุมมอง — server ยังตรวจสิทธิ์จริง)
+  function role() { return me.role === "Admin" && actAs ? actAs : me.role; }
+  function can(key, job) {
+    if (!D || !D.actions[key]) return false;
+    var a = D.actions[key], r = role();
+    if (r !== "Admin" && a.roles.indexOf(r) < 0) return false;
+    return a.from.indexOf(job.status || "") >= 0;
+  }
+  // การกระทำหลักของงานนี้ (ปุ่มบนการ์ด) ตามลำดับความสำคัญ
+  var MAIN_ORDER = ["create", "ackLate", "confirm", "shipped", "received", "installed", "proofSent"];
+  function mainAction(job) {
+    for (var i = 0; i < MAIN_ORDER.length; i++) {
+      var k = MAIN_ORDER[i];
+      if (k === "confirm" && job.status !== S().WAIT_OPS) continue;   // สถานะอื่นแก้กำหนดการได้ในแผง แต่ไม่นับเป็นงานค้าง
+      if (can(k, job)) return k;
+    }
+    return "";
+  }
+
+  function stepInfo(job) {
+    var s = S(), st = job.status, a = ["", "", "", ""];
+    if (st === s.WAIT_AE) a[0] = "w";
+    if ([s.SCHEDULED, s.SHIPPED, s.RESHIP, s.RECEIVED, s.INSTALLED, s.INSTALLED_MANUAL, s.ON_AIR, s.CLOSED].indexOf(st) >= 0) a[0] = "d";
+    if ([s.SHIPPED, s.RECEIVED, s.INSTALLED, s.INSTALLED_MANUAL, s.ON_AIR, s.CLOSED].indexOf(st) >= 0) a[1] = "d";
+    if (st === s.RESHIP) a[1] = "x";
+    if ([s.RECEIVED, s.INSTALLED, s.INSTALLED_MANUAL, s.ON_AIR, s.CLOSED].indexOf(st) >= 0) a[2] = "d";
+    if ([s.INSTALLED, s.INSTALLED_MANUAL, s.ON_AIR, s.CLOSED].indexOf(st) >= 0) a[3] = "d";
+    return a;
+  }
+  function pillCls(job) {
+    var s = S(), st = job.status;
+    if (!st) return "s-none";
+    if (st === s.WAIT_AE || st === s.RESHIP) return "s-red";
+    if (st === s.WAIT_OPS) return "s-wait";
+    if (st === s.ON_AIR || st === s.CLOSED || st === s.INSTALLED || st === s.INSTALLED_MANUAL) return "s-ok";
+    return "s-go";
+  }
+  function dotCls(job) {
+    if (!job.check || (!job.shipDate && !job.installDate)) return "plx-n";
+    return { green: "plx-g", yellow: "plx-y", red: "plx-r" }[job.check.level] || "plx-n";
+  }
+
+  // วันที่ที่ใช้เรียงความเร่งด่วนของการกระทำ
+  function dueOf(job, k) {
+    if (k === "create" || k === "proofSent" || k === "ackLate") return job.adOn;
+    if (k === "confirm") return job.createdAt ? job.createdAt.slice(0, 10) : job.adOn;
+    if (k === "shipped") return job.shipDate;
+    return job.installDate || job.adOn;
+  }
+
+  /* ------------------------- โหลดข้อมูล ------------------------- */
+  function loadCache() {
+    var raw = lsGet(CACHE_KEY);
+    if (!raw) return;
+    try { D = JSON.parse(raw); fromCache = true; me = D.me || me; } catch (e) { D = null; }
+  }
+  function refresh() {
+    if (loading) return;
+    loading = true;
+    renderHead();
+    google.script.run
+      .withSuccessHandler(function (r) {
+        loading = false;
+        if (!r || !r.ok) { renderAll(); toast((r && r.message) || "โหลดข้อมูลไม่สำเร็จ", true); return; }
+        D = r; me = r.me; fromCache = false;
+        lsSet(CACHE_KEY, JSON.stringify(r));
+        if (cur) { var j = findJob(cur.row, cur.sign); if (j) cur = j; }
+        renderAll();
+        if (cur && isOpen()) renderDrawer();
+      })
+      .withFailureHandler(function (e) { loading = false; renderAll(); toast("เชื่อมต่อไม่สำเร็จ: " + (e && e.message ? e.message : e), true); })
+      .listPosterJobs({});
+  }
+  function findJob(row, sign) {
+    if (!D) return null;
+    for (var i = 0; i < D.jobs.length; i++) if (D.jobs[i].row === row && D.jobs[i].sign === sign) return D.jobs[i];
+    for (var k = 0; k < D.jobs.length; k++) if (D.jobs[k].sign === sign && cur && D.jobs[k].monthKey === cur.monthKey) return D.jobs[k];
+    return null;
+  }
+  function replaceJob(job) {
+    if (!D) return;
+    for (var i = 0; i < D.jobs.length; i++) {
+      var o = D.jobs[i];
+      if (o.sign === job.sign && o.monthKey === job.monthKey) {
+        job.check = job.check || evaluate(job, curSuggest && curSuggest.buffer);
+        job.createdAt = job.createdAt || o.createdAt;
+        job.week = job.week || o.week;
+        job.slaOverdue = job.status === S().WAIT_OPS && o.slaOverdue;
+        D.jobs[i] = job;
+        return;
+      }
+    }
+  }
+  // ประเมินวันแบบเดียวกับ server (plEvaluate_) ใช้แสดงผลทันทีก่อนกดบันทึก
+  function evaluate(j, buffer) {
+    var b = buffer == null ? 2 : buffer, issues = [], level = "green";
+    if (j.shipDate && j.installDate && j.shipDate > j.installDate) { level = "red"; issues.push("วันส่งอยู่หลังวันติดตั้ง"); }
+    if (j.installDate && j.adOn && j.installDate > j.adOn) { level = "red"; issues.push("ติดตั้งหลังวัน Ad on"); }
+    if (j.shipDate && j.installDate && j.shipDate <= j.installDate) {
+      var gap = dayDiff(j.shipDate, j.installDate);
+      if (gap < b) { if (level === "green") level = "yellow"; issues.push("ส่ง→ติดตั้ง " + gap + " วัน น้อยกว่า buffer " + b + " วัน"); }
+    }
+    return { level: level, issues: issues };
+  }
+
+  /* ------------------------- วาดหน้าหลัก ------------------------- */
+  PLX.mount = function (el, o) {
+    root = el; opts = o || {};
+    view = lsGet("plx_view") || "mine";
+    root.innerHTML =
+      '<div class="plx">' +
+        '<div class="bl-card"><div class="plx-head"><div><div class="bl-title">🚚 ติดตามขนส่ง Poster</div><div class="plx-who"></div><div class="plx-src"></div></div>' +
+        '<div class="plx-hbtns"><button type="button" class="plx-btn" data-a="refresh">🔄 รีเฟรช</button><button type="button" class="plx-btn" data-a="back">← มุมมองเดิม</button></div></div>' +
+        '<div class="plx-testbox"></div>' +
+        '<div class="plx-vseg-wrap"><div class="bl-vseg" role="tablist"></div></div>' +
+        '<div class="plx-bar"></div><div class="plx-chips"></div></div>' +
+        '<div class="plx-list"></div>' +
+      '</div>' +
+      '<div class="plx-back"></div><aside class="plx-drawer" aria-hidden="true"><div class="plx-dh"><div class="t"></div><button type="button" class="plx-x" aria-label="ปิด">✕</button></div><div class="plx-db"></div></aside>' +
+      '<div class="plx-toast"></div>';
+    $('[data-a="refresh"]').addEventListener("click", refresh);
+    $('[data-a="back"]').addEventListener("click", function () { closeDrawer(); if (opts.back) opts.back(); });
+    $(".plx-back").addEventListener("click", closeDrawer);
+    $(".plx-x").addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && isOpen()) closeDrawer(); });
+    loadCache();
+    renderAll();
+    refresh();
+  };
+  PLX.show = function () { if (root) { renderAll(); refresh(); } };
+
+  function renderHead() {
+    if (!root) return;
+    var who = me && me.email ? (esc(me.name || me.email) + " · บทบาท " + esc(me.role || "ไม่มีในรายชื่อ Users (ดูได้อย่างเดียว)")) : "กำลังตรวจผู้ใช้…";
+    $(".plx-who").innerHTML = who;
+    var src = $(".plx-src");
+    if (loading) { src.className = "plx-src"; src.textContent = D ? "กำลังโหลดข้อมูลล่าสุด…" + (fromCache ? " (ตอนนี้แสดงข้อมูลจาก cache " + D.fetchedAt + ")" : "") : "กำลังโหลด…"; }
+    else if (D) { src.className = "plx-src" + (fromCache ? " cache" : ""); src.textContent = (fromCache ? "ข้อมูลจาก cache " : "ข้อมูลล่าสุดจากชีต ") + D.fetchedAt; }
+    $(".plx-testbox").innerHTML = D && D.testMode ? '<div class="plx-test">โหมดทดสอบ: ระบบกำลังอ่าน/เขียน "สำเนาชีต" ไม่ใช่ชีตจริง</div>' : "";
+  }
+
+  function renderAll() {
+    if (!root) return;
+    renderHead();
+    var V = [["mine", "งานของฉัน"], ["all", "ทุกงาน"], ["cal", "ปฏิทิน"], ["ship", "จุดจัดส่ง"]];
+    var seg = $(".bl-vseg");
+    seg.innerHTML = V.map(function (v) { return '<button type="button" data-v="' + v[0] + '" class="' + (view === v[0] ? "on" : "") + '">' + v[1] + "</button>"; }).join("");
+    $$("button", seg).forEach(function (b) { b.addEventListener("click", function () { view = b.getAttribute("data-v"); lsSet("plx_view", view); renderAll(); }); });
+    if (!D) { $(".plx-list").innerHTML = '<div class="bl-card"><div class="plx-empty">กำลังโหลดงาน…</div></div>'; $(".plx-bar").innerHTML = ""; $(".plx-chips").innerHTML = ""; return; }
+
+    // เดือน: ค่าเริ่มต้น = เดือนนี้ (ถ้ามีงาน) ไม่งั้นเดือนแรกที่มี
+    var months = {};
+    D.jobs.forEach(function (j) { months[j.monthKey] = 1; });
+    var ml = Object.keys(months).sort();
+    var tk = todayKey().slice(0, 7);
+    if (!month || !months[month]) month = months[tk] ? tk : (ml[0] || "");
+    var bar = '<select data-f="month" aria-label="เดือน">' + ml.map(function (m) { return '<option value="' + m + '"' + (m === month ? " selected" : "") + ">" + thMonth(m) + "</option>"; }).join("") + "</select>" +
+      '<input type="search" data-f="q" placeholder="ค้นหา รหัสป้าย / ลูกค้า / สนามบิน" value="' + esc(q) + '">';
+    if (me.role === "Admin") {
+      bar += '<select data-f="as" aria-label="ดูในฐานะ"><option value="">ดูในฐานะ: Admin</option>' +
+        ["AE", "Ops", "Production", "MA", "Installer"].map(function (r) { return '<option value="' + r + '"' + (actAs === r ? " selected" : "") + ">ดูในฐานะ: " + r + "</option>"; }).join("") + "</select>";
+    }
+    $(".plx-bar").innerHTML = bar;
+    $('[data-f="month"]').addEventListener("change", function (e) { month = e.target.value; renderAll(); });
+    var qi = $('[data-f="q"]');
+    qi.addEventListener("input", function () { q = qi.value; renderList(); renderChips(); });
+    var asSel = $('[data-f="as"]');
+    if (asSel) asSel.addEventListener("change", function (e) { actAs = e.target.value; renderAll(); if (isOpen()) renderDrawer(); });
+    renderChips();
+    renderList();
+  }
+
+  function baseJobs() {
+    var ql = q.trim().toLowerCase();
+    return D.jobs.filter(function (j) {
+      if (j.monthKey !== month) return false;
+      if (ql && (j.sign + " " + j.customer + " " + j.airport + " " + j.iata).toLowerCase().indexOf(ql) < 0) return false;
+      return true;
+    });
+  }
+  var STAGES = [
+    ["sla", "ต้องตามงาน", function (j) { return j.slaOverdue; }],
+    ["red", "วันไม่สมเหตุสมผล", function (j) { return j.check && j.check.level === "red"; }],
+    ["new", "ยังไม่สร้างงาน", function (j) { return !j.status; }],
+    ["WAIT_OPS"], ["WAIT_AE"], ["SCHEDULED"], ["SHIPPED"], ["RESHIP"], ["RECEIVED"], ["INSTALLED"], ["INSTALLED_MANUAL"], ["ON_AIR"], ["CLOSED"]
+  ];
+  function stageTest(st) {
+    if (st[2]) return st[2];
+    var name = S()[st[0]];
+    return function (j) { return j.status === name; };
+  }
+  function renderChips() {
+    var list = baseJobs();
+    var html = STAGES.map(function (st) {
+      var n = list.filter(stageTest(st)).length;
+      if (!n && stage !== st[0]) return "";
+      var label = st[1] || S()[st[0]];
+      return '<button type="button" class="bl-chip' + (stage === st[0] ? " on" : "") + '" data-s="' + st[0] + '">' + esc(label) + " <b>" + n + "</b></button>";
+    }).join("");
+    var c = $(".plx-chips");
+    c.innerHTML = html;
+    $$("button", c).forEach(function (b) { b.addEventListener("click", function () { var s = b.getAttribute("data-s"); stage = stage === s ? "" : s; renderChips(); renderList(); }); });
+  }
+  function filtered() {
+    var list = baseJobs();
+    if (stage) { var st = STAGES.filter(function (x) { return x[0] === stage; })[0]; if (st) list = list.filter(stageTest(st)); }
+    return list;
+  }
+
+  function jobHtml(j, actKey) {
+    var steps = stepInfo(j);
+    var k = actKey != null ? actKey : mainAction(j);
+    var btn = k ? '<button type="button" class="plx-btn pri" data-act="' + k + '">' + esc(D.actions[k].label) + "</button>" : "";
+    var flags = [];
+    if (j.slaOverdue) flags.push("เกิน SLA");
+    if (j.check && j.check.level === "red") flags.push(j.check.issues[0] || "วันมีปัญหา");
+    return '<div class="plx-job' + (cur && cur.sign === j.sign && cur.monthKey === j.monthKey ? " sel" : "") + '" data-row="' + j.row + '" data-sign="' + esc(j.sign) + '">' +
+      '<span class="plx-dot ' + dotCls(j) + '" title="' + esc(j.check ? j.check.issues.join(", ") : "") + '"></span>' +
+      '<div><div class="plx-sign">' + esc(j.sign) + '</div><div class="plx-sub">' + esc(j.airport || j.iata) + " · " + esc(j.customer || "–") + (j.version ? " (" + esc(j.version) + ")" : "") + "</div></div>" +
+      '<div><div class="plx-steps">' + steps.map(function (s) { return "<i class=\"" + s + "\"></i>"; }).join("") + '</div><div class="plx-stl"><span>ยืนยัน</span><span>ส่ง</span><span>รับ</span><span>ติดตั้ง</span></div></div>' +
+      '<div class="plx-dates"><span>ส่ง <b>' + th(j.shipDate) + "</b></span><span>ติดตั้ง <b>" + th(j.installDate) + "</b></span><span>Ad on <b>" + th(j.adOn) + "</b></span>" + (j.team ? "<span>ทีม <b>" + esc(j.team) + "</b></span>" : "") + "</div>" +
+      '<div class="plx-right"><span class="plx-pill ' + pillCls(j) + '">' + esc(j.status || "ยังไม่สร้างงาน") + "</span>" + (flags.length ? '<span class="plx-flag">' + esc(flags.join(" · ")) + "</span>" : "") + btn + "</div>" +
+      "</div>";
+  }
+
+  function renderList() {
+    var box = $(".plx-list");
+    var list = filtered();
+    var html = "";
+    // เลือกชิปสถานะแล้ว → แสดงทุกงานในสถานะนั้น (ให้ตรงกับตัวเลขบนชิป) แม้บทบาทนี้ไม่ต้องกดอะไร
+    if (view === "mine" && !stage) html = mineHtml(list);
+    else if (view === "cal") html = calHtml(list);
+    else if (view === "ship") html = groupHtml(list, function (j) { return j.shipTo || "(ยังไม่ระบุจุดจัดส่ง)"; }, function (a, b) { return a < b ? -1 : 1; });
+    else html = groupHtml(list, function (j) { return (j.customer || "(ไม่ระบุลูกค้า)") + "\u0001" + (j.week || ""); }, function (a, b) {
+      var wa = a.split("\u0001")[1] || "9999", wb = b.split("\u0001")[1] || "9999";
+      return wa < wb ? -1 : wa > wb ? 1 : a < b ? -1 : 1;
+    });
+    box.innerHTML = html || '<div class="bl-card"><div class="plx-empty">ไม่มีงานตามตัวกรองนี้</div></div>';
+    $$(".plx-job, .plx-ev", box).forEach(function (el) {
+      el.addEventListener("click", function (ev) {
+        var j = findJobBy(el.getAttribute("data-row"), el.getAttribute("data-sign"));
+        if (!j) return;
+        var act = ev.target.closest ? ev.target.closest("[data-act]") : null;
+        openDrawer(j, act ? act.getAttribute("data-act") : "");
+      });
+    });
+  }
+  function findJobBy(row, sign) {
+    row = +row;
+    for (var i = 0; i < D.jobs.length; i++) if (D.jobs[i].row === row && D.jobs[i].sign === sign) return D.jobs[i];
+    return null;
+  }
+  function weekLabel(w) { return w ? "สัปดาห์ " + th(w) + " – " + th(addDaysKey(w, 6)) : "ยังไม่มีวัน"; }
+  function groupHtml(list, keyFn, sortFn) {
+    var g = {};
+    list.forEach(function (j) { var k = keyFn(j); (g[k] = g[k] || []).push(j); });
+    return Object.keys(g).sort(sortFn).map(function (k) {
+      var parts = k.split("\u0001");
+      var head = parts.length > 1 ? esc(parts[0]) + " <span>" + weekLabel(parts[1]) + "</span>" : esc(parts[0]);
+      var items = g[k].sort(function (a, b) { return (a.installDate || a.adOn || "9") < (b.installDate || b.adOn || "9") ? -1 : 1; });
+      return '<div class="plx-grp"><div class="plx-gh"><div>' + head + "</div><span>" + items.length + " ป้าย</span></div>" + items.map(function (j) { return jobHtml(j); }).join("") + "</div>";
+    }).join("");
+  }
+  // งานของฉัน: งานที่บทบาทนี้ต้องกด เรียงตามความเร่งด่วน แยก เลยกำหนด / วันนี้ / พรุ่งนี้ / ถัดไป
+  function mineHtml(list) {
+    var r = role();
+    if (!r) return '<div class="bl-card"><div class="plx-empty">บัญชีนี้ยังไม่มีบทบาทในแท็บ Users จึงดูได้อย่างเดียว — ใช้มุมมอง "ทุกงาน"</div></div>';
+    var t = todayKey(), tm = addDaysKey(t, 1);
+    var items = [];
+    list.forEach(function (j) { var k = mainAction(j); if (k) items.push({ j: j, k: k, due: dueOf(j, k) || "9999" }); });
+    // งานที่ยังไม่สร้าง แสดงเฉพาะที่ Ad on ภายใน 21 วัน ไม่งั้นรายการยาวเกิน
+    items = items.filter(function (x) { return x.k !== "create" || (x.due !== "9999" && dayDiff(t, x.due) <= 21) || !x.j.adOn; });
+    items.sort(function (a, b) { return (b.j.slaOverdue ? 1 : 0) - (a.j.slaOverdue ? 1 : 0) || (a.due < b.due ? -1 : a.due > b.due ? 1 : 0); });
+    if (!items.length) return '<div class="bl-card"><div class="plx-empty">ไม่มีงานค้างของคุณในเดือนนี้ 🎉</div></div>';
+    var sec = { late: [], today: [], tom: [], next: [] };
+    items.forEach(function (x) {
+      if (x.j.slaOverdue || (x.due < t && x.k !== "create")) sec.late.push(x);
+      else if (x.due === t) sec.today.push(x);
+      else if (x.due === tm) sec.tom.push(x);
+      else sec.next.push(x);
+    });
+    var L = [["late", "เลยกำหนด / ต้องตาม"], ["today", "วันนี้"], ["tom", "พรุ่งนี้"], ["next", "ถัดไป"]];
+    return L.filter(function (l) { return sec[l[0]].length; }).map(function (l) {
+      return '<div class="plx-grp"><div class="plx-gh"><div>' + l[1] + "</div><span>" + sec[l[0]].length + " งาน</span></div>" +
+        sec[l[0]].map(function (x) { return jobHtml(x.j, x.k); }).join("") + "</div>";
+    }).join("");
+  }
+  // ปฏิทินรายเดือนตามวันติดตั้ง (ถ้ายังไม่มี ใช้ Ad on แสดงเป็นเส้นประ)
+  function calHtml(list) {
+    var p = month.split("-"), y = +p[0], m = +p[1] - 1;
+    var first = new Date(y, m, 1, 12), back = (first.getDay() + 6) % 7;
+    var start = new Date(y, m, 1 - back, 12);
+    var byDay = {};
+    list.forEach(function (j) { var k = j.installDate || j.adOn; if (k) (byDay[k] = byDay[k] || []).push(j); });
+    var t = todayKey(), cells = DOW.map(function (d) { return '<div class="dh">' + d + "</div>"; }).join("");
+    for (var i = 0; i < 42; i++) {
+      var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i, 12);
+      if (i >= 35 && d.getMonth() !== m) break;
+      var k = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      var evs = byDay[k] || [];
+      cells += '<div class="plx-day' + (d.getMonth() !== m ? " out" : "") + (k === t ? " today" : "") + (evs.length ? "" : " empty") + '"><div class="dn">' + DOW[i % 7] + " " + th(k) + "</div>" +
+        evs.map(function (j) {
+          return '<div class="plx-ev' + (j.installDate ? "" : " ad") + '" data-row="' + j.row + '" data-sign="' + esc(j.sign) + '" title="' + esc(j.sign + " · " + (j.status || "ยังไม่สร้างงาน")) + '"><span class="plx-dot ' + dotCls(j) + '"></span>' + esc(j.sign) + "</div>";
+        }).join("") + "</div>";
+    }
+    return '<div class="bl-card"><div class="plx-sub">ตามวันติดตั้ง · กรอบเส้นประ = ยังไม่มีวันติดตั้ง แสดงที่วัน Ad on</div><div class="plx-cal">' + cells + "</div></div>";
+  }
+
+  /* ------------------------- แผงรายละเอียด + ฟอร์ม ------------------------- */
+  function isOpen() { return root && root.classList.contains("plx-open"); }
+  function openDrawer(job, focusAct) {
+    cur = job; curHist = null; curSuggest = null; pendPhotos = {}; curMsg = null;
+    root.classList.add("plx-open");
+    $(".plx-drawer").setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    renderDrawer(focusAct);
+    renderList();
+    loadDetail();
+  }
+  function closeDrawer() {
+    if (!root) return;
+    root.classList.remove("plx-open");
+    $(".plx-drawer").setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+    cur = null;
+    if (D) renderList();
+  }
+  function loadDetail() {
+    var want = cur;
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (cur !== want) return;
+        if (!r || !r.ok) { curHist = []; renderDrawer(); return; }
+        curHist = r.history; curSuggest = r.suggest;
+        if (r.job.ver !== cur.ver) { replaceJob(r.job); cur = findJob(r.job.row, r.job.sign) || r.job; renderList(); }
+        renderDrawer();
+      })
+      .withFailureHandler(function () { if (cur === want) { curHist = []; renderDrawer(); } })
+      .getJob(cur.rowKey);
+  }
+
+  function kv(label, val) { return val ? "<dt>" + label + "</dt><dd>" + val + "</dd>" : ""; }
+  function photoLinks(list) {
+    if (!list || !list.length) return "";
+    return '<div class="plx-photos">' + list.map(function (u, i) {
+      var id = (u.match(/\/d\/([\w-]+)/) || [])[1];
+      var bg = id ? ' style="background-image:url(\'https://drive.google.com/thumbnail?id=' + id + '&sz=w200\')"' : "";
+      return '<a href="' + esc(u) + '" target="_blank" rel="noopener"' + bg + ">" + (id ? "" : "รูป " + (i + 1)) + "</a>";
+    }).join("") + "</div>";
+  }
+
+  function renderDrawer(focusAct) {
+    if (!cur) return;
+    var j = cur, s = S();
+    $(".plx-dh .t").innerHTML = esc(j.sign) + ' <span class="plx-pill ' + pillCls(j) + '">' + esc(j.status || "ยังไม่สร้างงาน") + "</span>";
+    var chk = j.check && (j.shipDate || j.installDate) ? '<div class="plx-check ' + j.check.level + '">' + (j.check.level === "green" ? "วันที่สมเหตุสมผล" : esc(j.check.issues.join(" · "))) + "</div>" : "";
+    var info = '<dl class="plx-kv">' +
+      kv("สนามบิน", esc((j.airport || "") + " (" + j.iata + ")")) +
+      kv("ลูกค้า", esc(j.customer + (j.version ? " · " + j.version : ""))) +
+      kv("สื่อ / วัสดุ", esc([j.media, j.material].filter(String).join(" / "))) +
+      kv("Ad on", th(j.adOn)) + kv("วันส่ง", th(j.shipDate)) + kv("วันติดตั้ง", th(j.installDate)) +
+      kv("จุดจัดส่ง", esc(j.shipTo)) + kv("ผู้รับ", esc(j.receiver)) + kv("ทีมติดตั้ง", esc(j.team)) +
+      kv("ยืนยันโดย", esc(j.confirmedBy ? j.confirmedBy + " · " + j.confirmedAt : "")) +
+      kv("ขนส่ง / พัสดุ", esc(j.tracking ? j.tracking + (j.shippedAt ? " · ส่ง " + j.shippedAt : "") : "")) +
+      kv("รับของ", esc(j.receivedAt ? j.condition + " · " + j.receivedAt : "")) +
+      kv("ติดตั้งจริง", esc(j.installedAt)) + kv("ส่ง Proof", esc(j.proofAt)) +
+      kv("เหตุผลล่าสุด", esc(j.reason)) + kv("Remark", esc(j.remark)) +
+      "</dl>" + photoLinks(j.photoList);
+
+    var forms = formsHtml(j);
+    var hist = curHist == null ? '<div class="plx-sub">กำลังโหลดประวัติ…</div>' : !curHist.length ? '<div class="plx-sub">ยังไม่มีประวัติในระบบ</div>' :
+      '<div class="plx-hist">' + curHist.slice(0, 40).map(function (h) {
+        return '<div><span class="a">' + esc(h.action) + '</span>' + (h.col ? " · " + esc(h.col) + ": " + esc(h.oldVal || "–") + " → " + esc(h.newVal || "–") : (h.newVal ? " · " + esc(h.newVal) : "")) +
+          '<div class="m">' + esc(h.at) + " · " + esc(h.email) + "</div></div>";
+      }).join("") + "</div>";
+    $(".plx-db").innerHTML = '<div class="plx-formmsg"></div>' + chk + forms + '<div class="plx-box"><h4>รายละเอียด</h4>' + info + '</div><div class="plx-box"><h4>ประวัติ</h4>' + hist + "</div>";
+    if (curMsg && curMsg.html) { $(".plx-db .plx-formmsg").innerHTML = '<div class="plx-msg ' + curMsg.cls + '">' + curMsg.html + "</div>"; bindReload(); }
+    bindForms(j);
+    if (focusAct) { var f = $('.plx-db [data-form="' + focusAct + '"]'); if (f) f.scrollIntoView({ block: "start" }); }
+  }
+
+  function dateVal(k) { return k || ""; }
+  function formsHtml(j) {
+    var out = [], s = S(), sg = curSuggest || {};
+    if (can("create", j)) {
+      out.push(form("create", "สร้างงาน (AE)",
+        field("วัน Ad on", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '" required>', true) +
+        '<div class="plx-sub">ระบบจะแนะนำวันติดตั้ง = Ad on − 1 และวันส่ง = ติดตั้ง − buffer ให้ Ops</div>', "สร้างงาน → ส่งให้ Ops"));
+    }
+    if (can("ackLate", j)) {
+      out.push(form("ackLate", "รับทราบ: ติดตั้งหลังวัน Ad on",
+        '<div class="plx-check red">ติดตั้ง ' + th(j.installDate) + " แต่ Ad on " + th(j.adOn) + (j.reason ? "<br>เหตุผลจาก Ops: " + esc(j.reason) : "") + "</div>", "รับทราบ", "warn"));
+    }
+    if (can("confirm", j)) {
+      var editing = j.status && j.status !== s.WAIT_OPS;
+      var inst = j.installDate || sg.installDate || "", ship = j.shipDate || sg.shipDate || "";
+      out.push(form("confirm", editing ? "แก้กำหนดการ (Ops)" : "ยืนยันกำหนดการ (Ops)",
+        field("จุดจัดส่ง / สถานที่รับงาน", '<input type="text" name="shipTo" value="' + esc(j.shipTo || sg.shipTo || "") + '" list="plx-shipto">' +
+          '<datalist id="plx-shipto">' + (sg.shipTo ? '<option value="' + esc(sg.shipTo) + '">' : "") + "</datalist>", true) +
+        field("ผู้รับและเบอร์โทร", '<input type="text" name="receiver" value="' + esc(j.receiver || sg.receiver || "") + '">') +
+        '<div class="plx-row2">' + field("วันจัดส่ง", '<input type="date" name="shipDate" value="' + ship + '">', true) +
+        field("วันติดตั้ง", '<input type="date" name="installDate" value="' + inst + '">', true) + "</div>" +
+        field("ทีมติดตั้ง", '<select name="team"><option value="">–</option>' + D.teams.map(function (t) { return '<option' + ((j.team || sg.team) === t ? " selected" : "") + ">" + esc(t) + "</option>"; }).join("") + "</select>") +
+        '<div class="plx-live"></div>' +
+        field("เหตุผล" + (editing ? " (ต้องใส่เมื่อแก้กำหนดการ)" : " (ต้องใส่ถ้าติดตั้งหลัง Ad on)"), '<textarea name="reason"></textarea>') +
+        '<div class="plx-sub">Ad on ' + th(j.adOn) + " · buffer " + (sg.buffer != null ? sg.buffer : "2") + " วัน" + (sg.installDate && !j.installDate ? " · ค่าที่กรอกให้คือค่าแนะนำ" : "") + "</div>",
+        editing ? "บันทึกการแก้ไข" : "ยืนยันกำหนดการ"));
+    }
+    if (can("shipped", j)) {
+      out.push(form("shipped", j.status === s.RESHIP ? "ส่งใหม่ (ของเสียหายรอบก่อน)" : "ส่งของแล้ว",
+        field("ขนส่ง / เลขพัสดุ", '<input type="text" name="tracking" placeholder="เช่น Kerry KEX123456" value="">', true) +
+        field("หมายเหตุ", '<textarea name="note"></textarea>'), "ส่งแล้ว"));
+    }
+    if (can("received", j)) {
+      out.push(form("received", "รับของปลายทาง",
+        '<div class="plx-seg2"><label class="ok"><input type="radio" name="condition" value="ครบ">✔ ครบ สภาพดี</label><label class="bad"><input type="radio" name="condition" value="เสียหาย">✖ เสียหาย</label></div>' +
+        field("หมายเหตุ (ถ้าเสียหาย ต้องบอกอาการ)", '<textarea name="note"></textarea>') +
+        photoPicker("received", "ถ่ายรูปของ (ถ้ามี)"), "ได้รับแล้ว"));
+    }
+    if (can("installed", j)) {
+      var CL = ["ติดตรงตำแหน่ง ตรงแนว", "ไม่มีฟอง / รอยยับ / รอยขาด", "ทำความสะอาดหน้างานแล้ว", "ถ่ายรูปไกล + ใกล้ครบ"];
+      out.push(form("installed", "ติดตั้งเสร็จ" + (role() === "Ops" ? " (Ops กดแทน Installer)" : ""),
+        photoPicker("installed", "ถ่ายรูปติดตั้ง (อย่างน้อย 1 รูป ระบบจะติ๊ก Status ให้)") +
+        '<div class="plx-cl">' + CL.map(function (c) { return '<label><input type="checkbox" name="checklist" value="' + esc(c) + '">' + esc(c) + "</label>"; }).join("") + "</div>" +
+        field("หมายเหตุ", '<textarea name="note"></textarea>'), "ติดตั้งแล้ว"));
+    }
+    if (can("proofSent", j)) {
+      out.push(form("proofSent", "ส่ง Proof ให้ลูกค้า", '<div class="plx-sub">On air แล้ว กดเมื่อส่ง Proof ให้ลูกค้าเรียบร้อย ระบบจะปิดงาน</div>', "ส่ง Proof แล้ว → ปิดงาน"));
+    }
+    if (can("updateAdOn", j)) {
+      out.push(form("updateAdOn", "แก้วัน Ad on (AE)",
+        field("วัน Ad on ใหม่", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '">', true) +
+        field("เหตุผล" + (j.status !== s.WAIT_OPS ? " (ต้องใส่ เพราะ Ops ยืนยันแล้ว)" : ""), '<textarea name="reason"></textarea>'), "บันทึกวัน Ad on", "", true));
+    }
+    if (!out.length) {
+      return '<div class="plx-box"><div class="plx-sub">' + (role() ? "ขั้นนี้ไม่ใช่งานของบทบาท " + esc(role()) + " (สถานะ: " + esc(j.status || "ยังไม่สร้างงาน") + ")" : "บัญชีนี้ยังไม่มีบทบาท ดูได้อย่างเดียว") + "</div></div>";
+    }
+    return out.join("");
+  }
+  function field(label, input, req) { return '<label class="plx-f"><span>' + label + (req ? ' <b class="req">*</b>' : "") + "</span>" + input + "</label>"; }
+  function photoPicker(key, label) {
+    return '<label class="plx-pick">📷 ' + label + '<input type="file" accept="image/*" capture="environment" multiple data-pick="' + key + '"></label><div class="plx-photos" data-prev="' + key + '"></div>';
+  }
+  function form(key, title, body, btnText, btnCls, collapsed) {
+    return '<form class="plx-box" data-form="' + key + '" novalidate>' +
+      (collapsed ? '<details><summary style="cursor:pointer;font-weight:700">' + title + '</summary><div class="plx-act" style="margin-top:10px">' + body + submit(btnText, btnCls) + "</div></details>"
+        : "<h4>" + title + '</h4><div class="plx-act">' + body + submit(btnText, btnCls) + "</div>") + "</form>";
+  }
+  function submit(t, cls) { return '<button type="submit" class="plx-btn ' + (cls || "pri") + '">' + esc(t) + "</button>"; }
+
+  function bindForms(j) {
+    $$(".plx-db form").forEach(function (f) {
+      var key = f.getAttribute("data-form");
+      f.addEventListener("submit", function (e) { e.preventDefault(); doAction(key, f); });
+    });
+    $$('.plx-db .plx-seg2 input').forEach(function (r) {
+      r.addEventListener("change", function () { $$('.plx-db .plx-seg2 label').forEach(function (l) { l.classList.toggle("on", l.querySelector("input").checked); }); });
+    });
+    $$(".plx-db [data-pick]").forEach(function (inp) {
+      inp.addEventListener("change", function () {
+        var key = inp.getAttribute("data-pick");
+        pendPhotos[key] = (pendPhotos[key] || []).concat(Array.prototype.slice.call(inp.files || []));
+        inp.value = "";
+        drawPending(key);
+      });
+    });
+    var cf = $('.plx-db form[data-form="confirm"]');
+    if (cf) {
+      var upd = function () {
+        var ev = evaluate({ shipDate: cf.shipDate.value, installDate: cf.installDate.value, adOn: j.adOn }, curSuggest && curSuggest.buffer);
+        var live = $(".plx-live", cf);
+        live.innerHTML = cf.shipDate.value && cf.installDate.value ? '<div class="plx-check ' + ev.level + '">' + (ev.level === "green" ? "วันที่สมเหตุสมผล" : esc(ev.issues.join(" · "))) + "</div>" : "";
+      };
+      ["shipDate", "installDate"].forEach(function (n) { cf[n].addEventListener("input", upd); cf[n].addEventListener("change", upd); });
+      upd();
+    }
+  }
+  function drawPending(key) {
+    var box = $('.plx-db [data-prev="' + key + '"]');
+    if (!box) return;
+    box.innerHTML = "";
+    (pendPhotos[key] || []).forEach(function (file, i) {
+      var d = document.createElement("div");
+      d.className = "ph";
+      d.style.backgroundImage = "url('" + URL.createObjectURL(file) + "')";
+      var b = document.createElement("button");
+      b.type = "button"; b.textContent = "✕"; b.setAttribute("aria-label", "เอารูปออก");
+      b.addEventListener("click", function () { pendPhotos[key].splice(i, 1); drawPending(key); });
+      d.appendChild(b);
+      box.appendChild(d);
+    });
+  }
+
+  // ย่อรูปฝั่งเครื่อง: ด้านยาวไม่เกิน 1600px แปลงเป็น JPEG
+  function shrink(file) {
+    return new Promise(function (resolve, reject) {
+      if (!/^image\//.test(file.type || "image/")) { reject(new Error("ไฟล์ " + file.name + " ไม่ใช่รูป")); return; }
+      var img = new Image(), url = URL.createObjectURL(file);
+      img.onload = function () {
+        var max = 1600, w = img.naturalWidth, h = img.naturalHeight, sc = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement("canvas");
+        c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("เปิดรูป " + file.name + " ไม่ได้")); };
+      img.src = url;
+    });
+  }
+  function gs(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve) {
+      var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (e) { resolve({ ok: false, code: "NETWORK", message: "เชื่อมต่อไม่สำเร็จ: " + (e && e.message ? e.message : e) }); });
+      r[fn].apply(r, args);
+    });
+  }
+  function uploadAll(key, job, progress) {
+    var files = pendPhotos[key] || [], urls = [], i = 0;
+    function next() {
+      if (i >= files.length) return Promise.resolve(urls);
+      progress("กำลังอัปโหลดรูป " + (i + 1) + "/" + files.length + "…");
+      return shrink(files[i]).then(function (dataUrl) {
+        return gs("uploadJobPhoto", job.rowKey, { dataUrl: dataUrl, kind: key === "received" ? "รับของ" : "ติดตั้ง" });
+      }).then(function (r) {
+        if (!r || !r.ok) throw r || { message: "อัปโหลดรูปไม่สำเร็จ" };
+        urls.push(r.url); i++;
+        return next();
+      });
+    }
+    return next();
+  }
+
+  // ปุ่ม "โหลดค่าล่าสุด" ในข้อความ CONFLICT (ผูกใหม่ทุกครั้งที่วาดลิ้นชัก)
+  var conflictJob = null;
+  function bindReload() {
+    var rb = $('.plx-db [data-a="reload"]');
+    if (!rb) return;
+    rb.addEventListener("click", function () {
+      curMsg = null;
+      if (conflictJob) { replaceJob(conflictJob); cur = findJob(conflictJob.row, conflictJob.sign) || conflictJob; conflictJob = null; }
+      renderList(); renderDrawer(); loadDetail();
+    });
+  }
+
+  function showFormMsg(cls, html) {
+    var box = $(".plx-db .plx-formmsg");
+    curMsg = html ? { cls: cls, html: html } : null;
+    box.innerHTML = html ? '<div class="plx-msg ' + cls + '">' + html + "</div>" : "";
+    if (html) box.scrollIntoView({ block: "nearest" });
+  }
+
+  function doAction(key, f) {
+    if (sending) return;
+    var j = cur;
+    var btn = f.querySelector('button[type="submit"]');
+    var payload = {}, err = "";
+    if (key === "create") { payload.adOn = f.adOn.value; if (!payload.adOn) err = "กรุณาเลือกวัน Ad on"; }
+    if (key === "updateAdOn") { payload.adOn = f.adOn.value; payload.reason = f.reason.value.trim(); if (!payload.adOn) err = "กรุณาเลือกวัน Ad on"; }
+    if (key === "confirm") {
+      ["shipTo", "receiver", "shipDate", "installDate", "team", "reason"].forEach(function (n) { payload[n] = f[n].value.trim(); });
+      if (!payload.shipTo || !payload.shipDate || !payload.installDate) err = "กรุณากรอกจุดจัดส่ง วันจัดส่ง และวันติดตั้ง";
+    }
+    if (key === "shipped") { payload.tracking = f.tracking.value.trim(); payload.note = f.note.value.trim(); if (!payload.tracking) err = "กรุณาใส่ขนส่ง / เลขพัสดุ"; }
+    if (key === "received") {
+      var c = f.querySelector('input[name="condition"]:checked');
+      payload.condition = c ? c.value : ""; payload.note = f.note.value.trim();
+      if (!payload.condition) err = "กรุณาเลือก ครบ หรือ เสียหาย";
+      else if (payload.condition === "เสียหาย" && !payload.note) err = "ของเสียหาย กรุณาบอกอาการในหมายเหตุ";
+    }
+    if (key === "installed") {
+      payload.note = f.note.value.trim();
+      payload.checklist = $$('input[name="checklist"]:checked', f).map(function (x) { return x.value; });
+      if (!(pendPhotos.installed || []).length && !j.photoList.length && !confirm("ยังไม่มีรูปติดตั้ง ระบบจะยังไม่ติ๊ก Status ยืนยันบันทึกหรือไม่?")) return;
+    }
+    if (err) { showFormMsg("err", esc(err)); return; }
+
+    sending = true;
+    var oldText = btn.textContent;
+    btn.disabled = true; btn.textContent = "กำลังบันทึก…";
+    $$(".plx-db button").forEach(function (b) { b.disabled = true; });
+    showFormMsg("", "");
+    var progress = function (t) { btn.textContent = t; };
+    var chain = (key === "installed" || key === "received") && (pendPhotos[key] || []).length
+      ? uploadAll(key, j, progress).then(function (urls) { payload.photoUrls = urls; })
+      : Promise.resolve();
+    chain.then(function () {
+      progress("กำลังบันทึก…");
+      var fn = { create: "createJob", updateAdOn: "updateAdOn", confirm: "confirmSchedule", ackLate: "acknowledgeLate", shipped: "markShipped", received: "markReceived", installed: "markInstalled", proofSent: "markProofSent" }[key];
+      return (key === "ackLate" || key === "proofSent") ? gs(fn, j.rowKey, j.ver) : gs(fn, j.rowKey, payload, j.ver);
+    }).then(function (r) { done(r); }, function (e) { done(e && e.code ? e : { ok: false, code: "ERROR", message: (e && e.message) || String(e) }); });
+
+    function done(r) {
+      sending = false;
+      if (r && r.ok) {
+        pendPhotos[key] = [];
+        replaceJob(r.job);
+        cur = findJob(r.job.row, r.job.sign) || r.job;
+        if (r.suggest) curSuggest = r.suggest;
+        lsSet(CACHE_KEY, JSON.stringify(D));
+        renderChips(); renderList(); renderDrawer();
+        var warn = (r.warnings || []).filter(String);
+        showFormMsg(warn.length ? "warn" : "ok", "บันทึกแล้ว ✔" + (warn.length ? "<br>" + esc(warn.join(" · ")) : "") +
+          (key === "create" && r.suggest ? "<br>แนะนำให้ Ops: ส่ง " + th(r.suggest.shipDate) + " · ติดตั้ง " + th(r.suggest.installDate) : ""));
+        toast("บันทึกแล้ว: " + D.actions[key].label);
+        loadDetail();
+        return;
+      }
+      btn.disabled = false; btn.textContent = oldText;
+      $$(".plx-db button").forEach(function (b) { b.disabled = false; });
+      var code = r && r.code, msg = esc((r && r.message) || "บันทึกไม่สำเร็จ");
+      if (code === "CONFLICT") {
+        showFormMsg("err", "<b>" + ERR_TEXT.CONFLICT + "</b><br>" + msg + '<br><button type="button" class="plx-btn" data-a="reload" style="margin-top:8px">โหลดค่าล่าสุด</button>');
+        conflictJob = r.job || null;
+        bindReload();
+      } else {
+        showFormMsg("err", "<b>" + esc(ERR_TEXT[code] || "บันทึกไม่สำเร็จ") + "</b><br>" + msg);
+        if (r && r.job) { replaceJob(r.job); }
+      }
+    }
+  }
+
+  var toastT = null;
+  function toast(t, bad) {
+    var el = $(".plx-toast");
+    if (!el) return;
+    el.textContent = t;
+    el.style.background = bad ? "#a12a1d" : "#10294a";
+    el.style.display = "block";
+    clearTimeout(toastT);
+    toastT = setTimeout(function () { el.style.display = "none"; }, 3500);
+  }
+})();
+</script>

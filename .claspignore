@@ -3,3 +3,6 @@
 !src/**/*.gs
 !src/**/*.html
 !src/appsscript.json
+
+# Poster Logistics: สำเนาโค้ดสำรอง (ตัดรหัสชีตออกแล้ว) — ไม่ให้ clasp push ขึ้นไปทับโปรเจกต์จริง
+src/poster-logistics/**

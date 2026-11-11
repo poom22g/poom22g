@@ -43,3 +43,23 @@ npm run create        # สร้าง Apps Script project ใหม่ (standa
 - `.clasp.json` มี `scriptId` เฉพาะเครื่อง/เฉพาะโปรเจกต์ ไม่ commit เข้า git (อยู่ใน `.gitignore` แล้ว)
 - ไฟล์ `.ts` ใน `src/` clasp จะ transpile เป็น `.gs` ให้อัตโนมัติตอน push — ไม่ต้อง build เอง
 - ทุกไฟล์ใน Apps Script อยู่ใน global scope เดียวกัน ห้ามใช้ `import`/`export` ข้ามไฟล์ ตั้งชื่อฟังก์ชัน/ตัวแปรให้ไม่ชนกันแทน
+
+## Poster Logistics (`src/poster-logistics/`)
+
+สำเนาโค้ดระบบติดตามงานติดตั้ง Poster สนามบิน จากโปรเจกต์ Apps Script "Dashboard Airport" (เก็บไว้เป็น backup / version history)
+
+| ไฟล์ | หน้าที่ |
+|---|---|
+| `Logistics.gs` | Config, หาคอลัมน์จากชื่อหัว, แปลงวันที่, lock, Log, สิทธิ์ตามบทบาท, `plSelfTest` |
+| `Jobs.gs` | state machine ของงาน (สร้างงาน → ยืนยันกำหนดการ → ส่ง → รับ → ติดตั้ง → On air → ปิดงาน), อัปโหลดรูปเข้า Drive |
+| `Notify.gs` | อีเมลสรุปประจำวัน 08:00, แจ้งเตือนรายชั่วโมง, ติดตั้ง/ลบ trigger |
+| `Triggers.gs` | onEdit ของคอลัมน์ B "Status" (ติ๊กมือ / เอาติ๊กออก) |
+| `JobsTest.gs` | ชุดทดสอบบนสำเนาชีต + `plUiTestOn` / `plUiTestOff` |
+| `PosterLogistics.html` | หน้าจอ (4 มุมมอง, ตามบทบาท, รองรับมือถือ) |
+
+ข้อควรรู้:
+
+- **รหัสชีตถูกตัดออก** — `PL_REAL_SPREADSHEET_ID_` ใน `Logistics.gs` และ `PL_TEST_SPREADSHEET_DEFAULT` ใน `JobsTest.gs` เป็น placeholder ต้องใส่ค่าจริงก่อนใช้งาน และอย่า commit ค่าจริงกลับเข้า repo นี้
+- **ไม่ครบทั้งโปรเจกต์** — โค้ดชุดนี้เรียกใช้ฟังก์ชันจาก `Code.gs` และถูกโหลดจาก `Dashboard.html` ของโปรเจกต์เดิม ซึ่งไม่ได้อยู่ใน repo นี้
+- **ไม่ถูก `clasp push`** — โฟลเดอร์นี้อยู่ใน `.claspignore` เพื่อกันการ push ไปทับโปรเจกต์จริงโดยไม่ตั้งใจ
+- Script Properties ที่ใช้: `PHOTO_FOLDER_ID`, `OPS_HEAD_EMAIL` (ไม่บังคับ), `NOTIFY_REDIRECT_TO` (ไม่บังคับ), `WEBAPP_URL` (ไม่บังคับ), `PL_UI_TEST_SPREADSHEET_ID` (เฉพาะโหมดทดสอบ)
