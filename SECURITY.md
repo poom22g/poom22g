@@ -26,7 +26,16 @@ Deploy → Manage deployments → ✏️ → **Who has access: Anyone within pla
 นำขึ้นโปรเจกต์จริง: copy ไฟล์ `Auth.gs`, `Logistics.gs`, `Notify.gs`, `Triggers.gs`, `JobsTest.gs` ไปวางทับใน editor
 (โฟลเดอร์นี้อยู่ใน `.claspignore` — `clasp push` จะไม่ส่งขึ้นให้) แล้ว **Deploy → New version** ใน deployment เดิม
 
-## 3. ต้องแก้ใน `Code.gs` ของโปรเจกต์จริง (ไม่อยู่ใน repo นี้)
+## 3. `Code.gs` / `debug.gs` (แก้แล้วในโปรเจกต์จริง — ไฟล์ไม่อยู่ใน repo นี้)
+
+ใส่ `requireViewer_()` (ผ่านเฉพาะ @planbmedia.co.th หรือเจ้าของ/Admin · ฉุกเฉินตั้ง Script Property `DASHBOARD_OPEN=1`)
+ที่ฟังก์ชันอ่านข้อมูลทั้งหมด + `clearDashboardCache` · `awAuthorizeDrive` และ `debugSignCount` ใส่ `plRequireAdminCaller_()`
+· `appsscript.json` เปลี่ยน `access` เป็น `DOMAIN` · `plTestNoMailLogin` ใส่ `plRequireAdminCaller_()`
+
+ค้างเชิงออกแบบ: ผู้ใช้แบบไม่มีอีเมล (`@nomail.local`) เก็บรหัสผ่านเป็นข้อความธรรมดาในคอลัมน์ `Password` ของแท็บ Users
+— ควรย้ายไปใช้รหัสผ่านแบบแฮชใน Script Properties (`plAdminResetPassword`) แล้วลบคอลัมน์นั้น
+
+### รายการเดิม (อ้างอิง)
 
 ฟังก์ชันเหล่านี้เปิดให้เรียกจากเว็บและหน้าเว็บเรียกโดยไม่ส่ง token:
 

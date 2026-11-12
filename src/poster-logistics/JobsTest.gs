@@ -320,7 +320,9 @@ function plTestDEnv_(need) {
   var ctx = T.ctx = plJobsCtx_(), sh = T.sh = ctx.sheet;
   T.colB = ctx.col.statusB + 1;
   var zone = plSystemZone_(ctx);
-  T.reset = function (row) {            // คืนแถวทดสอบ: เอาติ๊กออก ลบ note ล้างคอลัมน์ที่ระบบดูแล (AQ–BC)
+  T.reset = function (row) {            // คืนแถวทดสอบ: เอาติ๊กออก ลบ note ล้างคอลัมน์ที่ระบบดูแล (AQ–BC) + ลง Log ให้ค่า B ล่าสุดใน Log ตรงกับชีต
+    var sign = plStr_(sh.getRange(row, ctx.col.sign + 1).getValue());
+    withLock_(function () { appendLog_([{ email: "test@test", row: row, sign: sign, col: PL_F.statusB, oldVal: "", newVal: "FALSE", action: "ทดสอบ: คืนค่าแถวทดสอบ" }]); });
     sh.getRange(row, T.colB).setValue(false);
     sh.getRange(row, ctx.col.photos + 1).clearNote();
     if (zone[1] > zone[0]) sh.getRange(row, zone[0] + 1, 1, zone[1] - zone[0] + 1).clearContent();
@@ -373,6 +375,7 @@ function plTestPhaseD() {
   var R = T.free[0], R2 = T.free[1], old = T.old;
   try {
     out.push("INFO แถวทดสอบ onEdit " + R + ", " + R2 + " · แถวเดือนเก่า " + old);
+    [R, R2].forEach(T.reset);            // เริ่มจากสภาพที่ Log กับชีตตรงกัน (รอบก่อนอาจทิ้งค่า B ใน Log ค้างไว้)
     function ev(row, oldV) { return { source: ss, range: sh.getRange(row, colB), oldValue: oldV, value: oldV === "TRUE" ? "FALSE" : "TRUE" }; }
     function evMulti(row) { return { source: ss, range: sh.getRange(row, colB, 1, 3) }; }      // แก้หลายช่อง: ชีตไม่ส่งค่าเดิมมา
     function setB(row, v) { sh.getRange(row, colB).setValue(v); }
@@ -642,9 +645,98 @@ function plTestPhaseDNotify() {
   T.finish("สรุปแจ้งเตือน");
 }
 
+/* ---------------------------------------------------------------------
+ * ทดสอบเฟส จ บนสำเนา (ต้องเปิด plUiTestOn ก่อน) — backfillStatus
+ * ใช้แถวว่างเดือน 2026-11 4 แถว: ปรับ 4 ช่อง (AH/AJ/AK/AL) ชั่วคราวแล้วคืนค่าเดิมตอนจบ · ไม่ส่งอีเมล
+ * ------------------------------------------------------------------- */
+function plTestPhaseE() {
+  plRequireAdminCaller_();
+  var T = plTestDEnv_(4);
+  var out = T.out, check = T.check, S = T.S, ctx = T.ctx, sh = T.sh, c = ctx.col, job = T.job;
+  var rows = T.free.slice(0, 4), RA = rows[0], RB = rows[1], RC = rows[2], RD = rows[3], old = T.old;
+  var fields = ["shipTo", "shipDate", "installDate", "adOn"];
+  var saved = {};
+  rows.forEach(function (r) { saved[r] = fields.map(function (f) { return sh.getRange(r, c[f] + 1).getValue(); }); });
+  function setRow(r, vals) { fields.forEach(function (f, i) { sh.getRange(r, c[f] + 1).setValue(vals[i]); }); }
+  var D = function (n) { return new Date(2026, 10, n, 12, 0, 0); };
+  try {
+    out.push("INFO แถวทดสอบ " + rows.join(", ") + " · แถวเดือนเก่า " + old);
+    rows.forEach(T.reset);
+    setRow(RA, ["ที่ทดสอบ", D(20), D(22), D(23)]);   // ครบ 4 ช่อง
+    setRow(RB, ["", "", "", D(23)]);                   // ยังไม่มีวันส่ง
+    setRow(RC, ["", D(20), "", D(23)]);                // มีวันส่งแล้ว แต่ยังไม่มีวันติดตั้ง/จุดส่ง
+    setRow(RD, ["ที่ทดสอบ", D(20), D(22), D(23)]);   // จะตั้งสถานะไว้ก่อน → ต้องไม่ถูกทับ
+    sh.getRange(RD, c.status + 1).setValue(S.SHIPPED);
+    SpreadsheetApp.flush();
+
+    // แถวเก่ากว่าเดือนเริ่มใช้ ต้องไม่ถูกแตะ
+    var oldBefore = old ? sh.getRange(old, 1, 1, ctx.width).getValues()[0].map(String).join("|") : "";
+    var only = rows.concat(old ? [old] : []);
+    var allNow = sh.getRange(Config.DATA_START_ROW, 1, sh.getLastRow() - Config.DATA_START_ROW + 1, ctx.width).getValues();
+    var plan = plBackfillPlan_(ctx, allNow, only);
+    check("แผน: 3 แถวที่ยังไม่มีสถานะ (RD มีสถานะแล้วข้าม)", plan.plan.length === 3 && plan.skipped.hasStatus === 1, plan);
+    check("แผนไม่เขียนอะไร (ดูตัวอย่าง)", !plStr_(sh.getRange(RA, c.status + 1).getValue()), sh.getRange(RA, c.status + 1).getValue());
+
+    var lines = plBackfillRun_(only);
+    out.push("INFO " + lines[0]);
+    check("ครบ 4 ช่อง → มีกำหนด", job(RA).status === S.SCHEDULED, job(RA).status);
+    check("ไม่มีวันส่ง → รอกำหนดวันส่ง", job(RB).status === S.WAIT_SHIP, job(RB).status);
+    check("มีวันส่งแต่ไม่ครบ → รอ MA แจ้งแผน", job(RC).status === S.WAIT_MA, job(RC).status);
+    check("แถวที่มีสถานะอยู่แล้ว ไม่ถูกทับ", job(RD).status === S.SHIPPED && !job(RD).updatedBy, job(RD));
+    check("ตั้ง แก้ล่าสุดโดย/เมื่อ", !!job(RA).updatedBy && !!job(RA).updatedAt, job(RA));
+    check("ลง Log ทุกแถวที่เขียน", [RA, RB, RC].every(function (r) { return T.logHas(r, "backfillStatus"); }), "");
+    check("ไม่ลง Log แถวที่ข้าม", !T.logHas(RD, "backfillStatus"), "");
+    if (old) check("แถวเดือนเก่า (รวมคอลัมน์ B) ไม่ถูกแตะ", sh.getRange(old, 1, 1, ctx.width).getValues()[0].map(String).join("|") === oldBefore, old);
+
+    var again = plBackfillPlan_(ctx, sh.getRange(Config.DATA_START_ROW, 1, sh.getLastRow() - Config.DATA_START_ROW + 1, ctx.width).getValues(), only);
+    check("รันซ้ำ ไม่มีอะไรให้ตั้งเพิ่ม (idempotent)", again.plan.length === 0, again.plan);
+    var rep = plBackfillReport_(plBackfillPlan_(ctx, allNow, null), false).join(" / ");
+    check("รายงานระบุสถานะ UTH-DPH-07 (พบหรือไม่พบ)", rep.indexOf("UTH-DPH-07") >= 0, rep);
+    out.push("INFO " + plBackfillReport_(plBackfillPlan_(ctx, allNow, null), false).filter(function (l) { return l.indexOf("UTH-DPH-07") >= 0 || l.indexOf("รายงานแถวเก่า") >= 0; }).join(" | "));
+  } finally {
+    rows.forEach(function (r) {
+      T.reset(r);
+      fields.forEach(function (f, i) { sh.getRange(r, c[f] + 1).setValue(saved[r][i]); });
+    });
+    SpreadsheetApp.flush();
+    plClearUsersCache_();     // ล้างผู้ใช้จำลองออกจาก cache ทันที (ไม่งั้น trigger จริงจะใช้รายชื่อปลอมจนหมดอายุ)
+  }
+  T.finish("สรุป backfill");
+}
+
 // ตั้งเฉพาะ trigger onEdit บนสำเนา (ไว้ลองติ๊ก B ในหน้าชีตจริง ๆ) · ลบด้วย plRemoveTriggers
 function plTestInstallEditTrigger() {
   plRequireAdminCaller_();
   if (!PropertiesService.getScriptProperties().getProperty("PL_UI_TEST_SPREADSHEET_ID")) throw new Error("ต้องรัน plUiTestOn ก่อน");
   return plInstallTriggers_("edit");
+}
+
+
+// ทดสอบล็อกอินผู้ใช้แบบไม่มีอีเมล (อ่านแท็บ Users ของชีตที่ระบบชี้อยู่ ไม่เขียนชีต · ไม่ส่งอีเมล · ไม่แสดงรหัสผ่าน)
+function plTestNoMailLogin(username, password) {
+  plRequireAdminCaller_();               // รันจาก editor เท่านั้น (เดิมคนนอกเรียกได้ → เช็คได้ว่าชื่อผู้ใช้ไหนมีอยู่และเป็นบทบาทอะไร)
+  plClearUsersCache_();
+  var u = typeof username === "string" && username ? username : "ae1", out = [];
+  var id = plNoMailId_(u);
+  out.push("ตัวตนภายใน: " + id);
+  out.push("อยู่ใน plUsers_: " + !!plUsers_()[id] + " บทบาท=" + ((plUsers_()[id] || {}).role || "-"));
+  out.push("ไม่ถูกนับเป็นผู้รับอีเมล: " + (plEmailsByRole_(Config.ROLES).indexOf(id) < 0));
+  var bad = plAuthLogin(u, "รหัสผิดแน่นอน-xx");
+  out.push("รหัสผิด → ok=" + bad.ok + " code=" + bad.code);
+  if (typeof password !== "string" || !password) {   // รันจาก editor → อ่านจากคอลัมน์ Password ของแถวนั้น (ไม่แสดงค่า)
+    password = "";
+    var sh = plSheet_(Config.SHEET_USERS), hd = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0], pc = 0;
+    hd.forEach(function (h, k) { if (!pc && /^password$/i.test(String(h).trim())) pc = k + 1; });
+    plUserRows_().forEach(function (r) { if (r.email === id && pc) password = String(sh.getRange(r.row, pc).getDisplayValue() || ""); });
+  }
+  if (password) {
+    var good = plAuthLogin(u, password);
+    out.push("รหัสถูก → ok=" + good.ok + (good.ok ? " role=" + good.me.role + " email=" + good.me.email : " code=" + good.code));
+    if (good.ok) {
+      var cu = plCurrentUser_(good.token);
+      out.push("token ใช้ได้ → role=" + cu.role + " email=" + cu.email + " via=" + cu.via);
+    }
+  }
+  Logger.log(out.join("\n"));
+  return out;
 }

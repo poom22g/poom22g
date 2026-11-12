@@ -24,7 +24,7 @@ var PL_NOT_SHIPPED = [Config.STATUS.SCHEDULED, Config.STATUS.RESHIP, Config.STAT
 // อีเมลทุกคนของบทบาทนั้น (จากแท็บ Users)
 function plEmailsByRole_(roles) {
   var users = plUsers_(), out = [];
-  Object.keys(users).forEach(function (em) { if (roles.indexOf(users[em].role) >= 0) out.push(em); });
+  Object.keys(users).forEach(function (em) { if (roles.indexOf(users[em].role) >= 0 && plIsRealEmail_(em)) out.push(em); });   // ผู้ใช้ไม่มีอีเมลไม่รับอีเมล
   return out;
 }
 
@@ -513,4 +513,21 @@ function plInstallTriggers() {
     throw new Error("ตอนนี้อยู่ในโหมดทดสอบ (ใช้สำเนาชีต) — รัน plUiTestOff ก่อน แล้วค่อยรัน plInstallTriggers · ถ้าจะลองติ๊กบนสำเนาใช้ plTestInstallEditTrigger");
   }
   return plInstallTriggers_("");
+}
+
+// แสดง trigger ของระบบนี้ว่าผูกกับชีตไหน (อ่านอย่างเดียว ไม่แก้/ไม่ลบอะไร) · รันมือจาก editor
+function plListTriggers() {
+  plRequireAdminCaller_();
+  var lines = [];
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    var fn = t.getHandlerFunction();
+    if (PL_TRIGGER_FNS.indexOf(fn) < 0) return;
+    var src = "", sid = "";
+    try { src = String(t.getTriggerSource()); sid = String(t.getTriggerSourceId() || ""); } catch (e) { }
+    var which = !sid ? "(ตามเวลา ไม่ผูกชีต)" : sid === PL_REAL_SPREADSHEET_ID_ ? "= ชีตจริง" : sid === PL_TEST_SPREADSHEET_DEFAULT ? "= สำเนาทดสอบ" : "= ชีตอื่น";
+    lines.push(fn + " · " + t.getEventType() + " · " + src + (sid ? " · " + sid : "") + " " + which);
+  });
+  if (!lines.length) lines.push("ไม่พบ trigger ของ Poster Logistics");
+  Logger.log(lines.join("\n"));
+  return lines;
 }

@@ -135,7 +135,7 @@ function plAuthRequestCode(email) {
     cache.put(hrKey, String(n + 1), 3600);
 
     var u = plUsers_()[em];
-    if (!u) return { ok: true, message: PL_AUTH_SENT_MSG };
+    if (!u || !plIsRealEmail_(em)) return { ok: true, message: PL_AUTH_SENT_MSG };   // ผู้ใช้แบบไม่มีอีเมลไม่มีที่ให้ส่ง
 
     var rd = plNotifyRedirect_();            // โหมดทดสอบ: ส่งแทนไปที่เจ้าของสคริปต์ (กติกาเดียวกับ Notify.gs)
     if (rd.blocked) throw plErr_("ERROR", "โหมดทดสอบ: ระบบไม่รู้อีเมลปลายทางสำหรับส่งรหัส กรุณาแจ้ง Admin");
@@ -317,12 +317,42 @@ function plAuthNewPassword_() {
   return out.slice(0, 5) + "-" + out.slice(5);
 }
 
+/* แถวที่ไม่มีอีเมลแต่มี "ชื่อผู้ใช้" (คอลัมน์ D) = ผู้ใช้แบบไม่มีอีเมล: ใช้รหัสตัวตนภายใน <ชื่อผู้ใช้>@nomail.local
+ * (ไม่ใช่อีเมลจริง — ระบบไม่ส่งอีเมลถึง) และล็อกอินด้วย ชื่อผู้ใช้ + รหัสผ่านในคอลัมน์ Password ของชีตได้ */
+var PL_NOMAIL_DOMAIN = "nomail.local";
+function plNoMailId_(username) {
+  var u = String(username == null ? "" : username).trim().toLowerCase();
+  return PL_USERNAME_RE.test(u) ? u + "@" + PL_NOMAIL_DOMAIN : "";
+}
+function plIsRealEmail_(id) {
+  var s = String(id || "").toLowerCase();
+  return !!s && s.slice(-(PL_NOMAIL_DOMAIN.length + 1)) !== "@" + PL_NOMAIL_DOMAIN;
+}
+// ตัวตนของแถวใน Users: มีอีเมล → อีเมล (ต้องรูปแบบถูก) · ไม่มีอีเมล → รหัสตัวตนจากชื่อผู้ใช้ · อื่น ๆ → ""
+function plRowIdentity_(emailCell, usernameCell) {
+  var raw = String(emailCell == null ? "" : emailCell).trim();
+  return raw ? plAuthNormEmail_(raw) : plNoMailId_(usernameCell);
+}
+
+// รหัสผ่านที่กรอกในคอลัมน์ "Password" ของแท็บ Users (หาจากชื่อหัว) — ใช้ตรวจตอนล็อกอินเท่านั้น ไม่ส่งออกไปหน้าเว็บ
+function plSheetPwCheck_(email, pw) {
+  var sh = plSheet_(Config.SHEET_USERS), lastCol = sh.getLastColumn(), pwCol = 0;
+  if (lastCol < 1) return false;
+  sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0].forEach(function (h, i) { if (!pwCol && /^password$/i.test(String(h || "").trim())) pwCol = i + 1; });
+  if (!pwCol) return false;
+  var row = 0;
+  plUserRows_().forEach(function (r) { if (!row && r.email === email) row = r.row; });
+  if (!row) return false;
+  var stored = String(sh.getRange(row, pwCol).getDisplayValue() || "");
+  return stored.length > 0 && plAuthSame_(stored, pw);
+}
+
 // อ่านแท็บ Users ทั้ง 5 คอลัมน์ → [{ email, name, role, username, status, row }]  (status: active | inactive)
 function plUserRows_() {
   var sh = plSheet_(Config.SHEET_USERS), last = sh.getLastRow(), out = [];
   if (last < 2) return out;
   sh.getRange(2, 1, last - 1, 5).getDisplayValues().forEach(function (r, i) {
-    var email = plAuthNormEmail_(r[0]);
+    var email = plRowIdentity_(r[0], r[3]);
     if (!email) return;
     out.push({ email: email, name: String(r[1] || "").trim(), role: String(r[2] || "").trim(), username: String(r[3] || "").trim().toLowerCase(),
       status: plIsInactive_(r[4]) ? "inactive" : "active", row: i + 2 });
@@ -359,7 +389,7 @@ function plAuthLogin(login, password) {
     var fails = Number(cache.get(fk) || 0);
     if (fails >= PL_PW.FAIL_MAX) throw plErr_("TOO_MANY", "กรอกผิดหลายครั้ง ลองใหม่ในอีก " + Math.round(PL_PW.LOCK_SEC / 60) + " นาที หรือให้ Admin รีเซ็ตรหัสผ่านให้");
     var email = plFindLogin_(lg);
-    var ok = email ? plPwCheck_(email, pw) : (plPwCheck_("nobody@invalid.test", pw), false);
+    var ok = email ? (plPwCheck_(email, pw) || plSheetPwCheck_(email, pw)) : (plPwCheck_("nobody@invalid.test", pw), false);
     if (!ok) {
       cache.put(fk, String(fails + 1), PL_PW.LOCK_SEC);
       var left = PL_PW.FAIL_MAX - fails - 1;

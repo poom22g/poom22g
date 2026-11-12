@@ -4,7 +4,7 @@
  * กติกา: ไม่แตะคอลัมน์เดิม A–AP · หาคอลัมน์จากชื่อหัว (แถว 4) เสมอ · ทุกการเขียนผ่าน lock และลง Log
  * ===================================================================== */
 
-var PL_REAL_SPREADSHEET_ID_ = "YOUR_REAL_SPREADSHEET_ID";   // ใส่รหัสชีตจริงก่อน push ขึ้น Apps Script (ไม่เก็บใน repo สาธารณะ)
+var PL_REAL_SPREADSHEET_ID_ = "YOUR_REAL_SPREADSHEET_ID";
 
 var Config = {
   SPREADSHEET_ID: PL_REAL_SPREADSHEET_ID_,
@@ -303,7 +303,7 @@ function plUsers_() {
   var out = {};
   if (last >= 2) {
     sh.getRange(2, 1, last - 1, 5).getDisplayValues().forEach(function (r) {
-      var email = String(r[0] || "").trim().toLowerCase();
+      var email = plRowIdentity_(r[0], r[3]);     // ไม่มีอีเมล → ใช้ชื่อผู้ใช้ (Auth.gs)
       var role = String(r[2] || "").trim();
       if (!email || Config.ROLES.indexOf(role) < 0 || plIsInactive_(r[4])) return;
       out[email] = { name: String(r[1] || "").trim(), role: role };
@@ -513,4 +513,117 @@ function plColLetter_(n) {
   var s = "";
   while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
   return s;
+}
+
+/* ---------------------------------------------------------------------
+ * เฟส จ — Migration: backfillStatus (รันมือครั้งเดียว) + รายงานแถวเก่าที่ผิดปกติ
+ *  - ตั้ง "สถานะงาน" (AQ) เริ่มต้นเฉพาะแถวเดือน >= Config.GO_LIVE_MONTH ที่ AQ ยังว่าง (รันซ้ำไม่ซ้ำซ้อน)
+ *      ครบ 4 ช่อง (การจัดส่ง/สถานที่รับงาน, วันส่ง, วันติดตั้ง, ad release) = "มีกำหนด"
+ *      ไม่ครบ + ยังไม่มีวันส่ง = "รอกำหนดวันส่ง" · ไม่ครบ + มีวันส่งแล้ว = "รอ MA แจ้งแผน"
+ *      (โฟลว์ใหม่ไม่มีสถานะ "รอ Ops รับงาน" แล้ว สองสถานะนี้คือขั้นที่ตรงกับความหมายเดิมที่สุด)
+ *  - แถวเก่ากว่าเดือนเริ่มใช้ ไม่แตะเลย (รวมคอลัมน์ B) · ไม่เขียนทับสถานะที่มีอยู่
+ *  - รายงาน (ไม่แก้): แถวเก่าที่ B = FALSE ทั้งที่วันติดตั้งผ่านแล้ว (รวม UTH-DPH-07 ที่ระบุในสเปก)
+ *  - plBackfillPreview() = แสดงผลเหมือนกันแต่ไม่เขียนอะไร ให้รันดูก่อน
+ * ------------------------------------------------------------------- */
+
+// คืนแผน: { plan:[{row,sign,monthKey,status}], skipped:{...}, review:[...], notes:[...] } โดยไม่เขียนอะไร
+// only (ไม่บังคับ, ใช้ในชุดทดสอบ) = จำกัดให้พิจารณาเฉพาะเลขแถวเหล่านี้ · รันจริงไม่ส่ง = ทุกแถว
+function plBackfillPlan_(ctx, all, only) {
+  var c = ctx.col, S = Config.STATUS;
+  var today = Utilities.formatDate(new Date(), Config.TZ, "yyyy-MM-dd");
+  var plan = [], review = [];
+  var skipped = { noSign: 0, noMonth: 0, oldMonth: 0, hasStatus: 0 };
+  var notes = { doneButNoStatus: 0, scheduled: 0, waitShip: 0, waitMa: 0 };
+  all.forEach(function (v, i) {
+    var rowNum = i + Config.DATA_START_ROW;
+    if (only && only.indexOf(rowNum) < 0) return;
+    var sign = plStr_(plCell_(v, c.sign));
+    if (!sign) { skipped.noSign++; return; }
+    var mk = plMonthKey_(plCell_(v, c.year), plCell_(v, c.month));
+    if (!mk) { skipped.noMonth++; return; }
+    var isB = plCell_(v, c.statusB) === true || String(plCell_(v, c.statusB)).toUpperCase() === "TRUE";
+    if (mk < Config.GO_LIVE_MONTH) {
+      skipped.oldMonth++;
+      // รายงานเท่านั้น: B ไม่ติ๊กแต่วันติดตั้งผ่านแล้ว
+      var ik = plDateKey_(plCell_(v, c.installDate));
+      if (!isB && ik && ik < today) {
+        review.push({ row: rowNum, sign: sign, month: mk, installDate: ik, key: sign.toUpperCase() === "UTH-DPH-07" });
+      }
+      return;
+    }
+    if (plStr_(plCell_(v, c.status))) { skipped.hasStatus++; return; }
+    var hasShipTo = !!plStr_(plCell_(v, c.shipTo));
+    var hasShip = !!plDateKey_(plCell_(v, c.shipDate));
+    var hasInst = !!plDateKey_(plCell_(v, c.installDate));
+    var hasAd = !!plDateKey_(plCell_(v, c.adOn));
+    var st;
+    if (hasShipTo && hasShip && hasInst && hasAd) { st = S.SCHEDULED; notes.scheduled++; }
+    else if (!hasShip) { st = S.WAIT_SHIP; notes.waitShip++; }
+    else { st = S.WAIT_MA; notes.waitMa++; }
+    if (isB) notes.doneButNoStatus++;      // ติ๊ก B ไว้แล้วแต่ไม่มีสถานะ: ตามสเปกตั้งตามจำนวนช่องเท่านั้น ไม่แก้ B
+    plan.push({ row: rowNum, sign: sign, monthKey: mk, status: st, isB: isB });
+  });
+  return { plan: plan, skipped: skipped, review: review, notes: notes };
+}
+
+function plBackfillReport_(res, wrote) {
+  var lines = [];
+  lines.push((wrote ? "backfillStatus: ตั้งสถานะแล้ว " : "[ดูตัวอย่าง ไม่ได้เขียน] จะตั้งสถานะ ") + res.plan.length + " แถว (เดือน >= " + Config.GO_LIVE_MONTH + ")");
+  lines.push("  มีกำหนด " + res.notes.scheduled + " · รอกำหนดวันส่ง " + res.notes.waitShip + " · รอ MA แจ้งแผน " + res.notes.waitMa);
+  lines.push("  ข้าม: ไม่มีรหัสป้าย " + res.skipped.noSign + " · อ่านเดือนไม่ได้ " + res.skipped.noMonth +
+    " · แถวเก่ากว่าเดือนเริ่มใช้ (ไม่แตะ) " + res.skipped.oldMonth + " · มีสถานะอยู่แล้ว " + res.skipped.hasStatus);
+  if (res.notes.doneButNoStatus) lines.push("  หมายเหตุ: " + res.notes.doneButNoStatus + " แถวติ๊ก B ไว้แล้วแต่ตั้งสถานะตามจำนวนช่องวันที่ (ตามสเปก ไม่แก้ B) ควรให้คนดูแลตรวจ");
+  var key = res.review.filter(function (r) { return r.key; });
+  lines.push("รายงานแถวเก่า (ไม่แก้): B = FALSE ทั้งที่วันติดตั้งผ่านแล้ว " + res.review.length + " แถว");
+  if (key.length) key.forEach(function (r) { lines.push("  ★ UTH-DPH-07 แถว " + r.row + " เดือน " + r.month + " วันติดตั้ง " + r.installDate + " B=FALSE"); });
+  else lines.push("  ★ ไม่พบแถว UTH-DPH-07 ที่เข้าเงื่อนไข (B=FALSE และวันติดตั้งผ่านแล้ว)");
+  res.review.filter(function (r) { return !r.key; }).slice(0, 20).forEach(function (r) {
+    lines.push("  - " + r.sign + " แถว " + r.row + " เดือน " + r.month + " วันติดตั้ง " + r.installDate);
+  });
+  return lines;
+}
+
+function plBackfillPreview() {
+  plRequireAdminCaller_();
+  var ctx = plJobsCtx_();
+  var n = ctx.sheet.getLastRow() - Config.DATA_START_ROW + 1;
+  var all = n > 0 ? ctx.sheet.getRange(Config.DATA_START_ROW, 1, n, ctx.width).getValues() : [];
+  var lines = plBackfillReport_(plBackfillPlan_(ctx, all), false);
+  Logger.log(lines.join("\n"));
+  return lines;
+}
+
+function backfillStatus() {
+  plRequireAdminCaller_();
+  return plBackfillRun_(null);
+}
+
+function plBackfillRun_(only) {
+  var who = "";
+  try { who = String(Session.getEffectiveUser().getEmail() || "") || "backfillStatus"; } catch (e) { who = "backfillStatus"; }
+  var lines = withLock_(function () {
+    var ctx = plJobsCtx_(), c = ctx.col, sh = ctx.sheet;
+    if (c.status < 0 || c.updatedBy < 0 || c.updatedAt < 0) throw new Error("ยังไม่มีคอลัมน์สถานะงาน/แก้ล่าสุด — รัน setupSheets() ก่อน");
+    var n = sh.getLastRow() - Config.DATA_START_ROW + 1;
+    var all = n > 0 ? sh.getRange(Config.DATA_START_ROW, 1, n, ctx.width).getValues() : [];
+    var res = plBackfillPlan_(ctx, all, only);
+    if (res.plan.length) {
+      var token = plNowToken_();
+      // เขียนเฉพาะ 3 คอลัมน์ของระบบ (สถานะงาน / แก้ล่าสุดโดย / แก้ล่าสุดเมื่อ) ค่าเดิมของแถวอื่นเขียนกลับตามเดิม
+      var cols = [c.status, c.updatedBy, c.updatedAt];
+      var blocks = cols.map(function (ci) { return all.map(function (v) { return [v[ci]]; }); });
+      res.plan.forEach(function (p) {
+        var k = p.row - Config.DATA_START_ROW;
+        blocks[0][k][0] = p.status; blocks[1][k][0] = who; blocks[2][k][0] = token;
+      });
+      cols.forEach(function (ci, j) { sh.getRange(Config.DATA_START_ROW, ci + 1, n, 1).setValues(blocks[j]); });
+      appendLog_(res.plan.map(function (p) {
+        return { email: who, row: p.row, sign: p.sign, col: PL_F.status, oldVal: "", newVal: p.status, action: "backfillStatus (ตั้งสถานะเริ่มต้น)" };
+      }));
+      try { if (typeof clearDashboardCache === "function") clearDashboardCache(Config.SHEET_JOBS); } catch (e) { }
+    }
+    return plBackfillReport_(res, true);
+  });
+  Logger.log(lines.join("\n"));
+  return lines;
 }

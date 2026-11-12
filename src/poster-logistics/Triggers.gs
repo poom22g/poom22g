@@ -6,8 +6,9 @@
  *
  * รู้ได้อย่างไรว่าช่องไหน "เพิ่งถูกแก้":
  *  - แก้ช่องเดียว → ใช้ค่าเดิมที่ชีตส่งมา (e.oldValue)
- *  - แก้หลายช่องพร้อมกัน (วาง/ลาก/เลือกหลายช่องแล้วกด) ชีตไม่บอกค่าเดิม → ดูค่า B ล่าสุดที่ระบบเคยบันทึกใน Log
- *    ถ้าไม่มีใน Log ค่อยอนุมานจากสถานะงาน · ถ้ายังไม่แน่ใจ → ไม่แตะแถวนั้น (ไม่เดา)
+ *  - แก้หลายช่องพร้อมกัน (วาง/ลาก/เลือกหลายช่องแล้วกด) ชีตไม่บอกค่าเดิม:
+ *      ยังไม่มีงานในระบบ → ไม่รู้ ไม่แตะแถวนั้น (ไม่เดา) · งานในระบบที่ยังไม่ติดตั้ง → เดิมไม่ได้ติ๊ก
+ *      งานที่ติดตั้งแล้ว → ดูค่า B ล่าสุดที่ระบบบันทึกใน Log (นับจากการสร้างงานครั้งล่าสุด) ไม่มีค่อยอนุมานจากสถานะ/รูป
  * หมายเหตุ: installable onEdit ไม่ทำงานกับการแก้ผ่าน API/สคริปต์ — ทำงานเฉพาะคนแก้ในหน้าชีต
  * ===================================================================== */
 
@@ -80,6 +81,8 @@ function plHandleEditB_(e, user) {
         logIdx = {};
         var L = plSheet_(Config.SHEET_LOG), last = L.getLastRow();
         if (last >= 2) L.getRange(2, 1, last - 1, 8).getDisplayValues().forEach(function (r) {
+          // สร้างงานใหม่บนแถวเดิม = เริ่มรอบใหม่ ค่า B ที่บันทึกไว้ก่อนหน้านั้นไม่นับ
+          if (r[7].indexOf("สร้างงาน") === 0 && logIdx[r[2] + "|" + r[3]]) delete logIdx[r[2] + "|" + r[3]].b;
           if (r[4] !== PL_F.statusB && r[4] !== PL_F.reason) return;
           var o = logIdx[r[2] + "|" + r[3]] || (logIdx[r[2] + "|" + r[3]] = {});
           if (r[4] === PL_F.reason) o.reason = r[6];
@@ -96,12 +99,13 @@ function plHandleEditB_(e, user) {
         if (e.oldValue !== undefined && e.oldValue !== null) return String(e.oldValue).toUpperCase() === "TRUE";
         if (e.value !== undefined && e.value !== null) return false;       // ไม่มีค่าเดิม = ช่องเคยว่าง
       }
-      var li = logInfo(row, job.sign);
+      // แก้หลายช่อง: ชีตไม่บอกค่าเดิม
+      if (!job.status) return null;        // ยังไม่มีงานในระบบ → ไม่มีบันทึกที่เชื่อได้ (Log เก่าเป็นของรอบก่อน) ไม่เดา
+      if (!installed) return false;        // งานในระบบที่ยังไม่ติดตั้ง: ทุกทางที่ติ๊ก B จะเปลี่ยนสถานะเป็นติดตั้งแล้วเสมอ จึงถือว่าเดิมไม่ได้ติ๊ก
+      var li = logInfo(row, job.sign);     // ติดตั้งแล้ว: Ops อาจเอาติ๊กออกไว้ → ดูค่าล่าสุดใน Log
       if (li.b === true || li.b === false) return li.b;
-      // ไม่มีใน Log → อนุมานจากสถานะ (เฉพาะกรณีที่ชัด)
       if (job.status === PL_S.INSTALLED_MANUAL) return true;               // สถานะนี้มาจากการติ๊กมือ
       if (job.status === PL_S.INSTALLED) return job.photoList.length > 0;  // แอปติ๊กให้เฉพาะเมื่อมีรูป
-      if (job.status && !installed) return false;                          // งานในระบบที่ยังไม่ติดตั้ง ไม่เคยถูกติ๊ก
       return null;
     }
 
