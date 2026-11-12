@@ -248,6 +248,18 @@ function plRequireAdminCaller_() {
   }
 }
 
+// ฟังก์ชันที่ trigger ตามเวลาเรียก (plDailyDigest / plHourlyNotify) — ชื่อต้องไม่มี _ ท้าย trigger ถึงจะเรียกได้
+// จึงถูกเปิดให้หน้าเว็บเรียกด้วย · ผ่านได้เฉพาะ: trigger จริงของโปรเจกต์ (เช็ค triggerUid กับรายการ trigger)
+// หรือเจ้าของ/Admin ที่รันเอง · คนนอกเรียกผ่าน google.script.run → ส่ง triggerUid ปลอมมาก็ไม่ตรง → ไม่ผ่าน
+function plRequireTriggerOrAdmin_(e) {
+  var uid = e && (typeof e === "object") ? String(e.triggerUid || "") : "";
+  if (uid) {
+    var hit = ScriptApp.getProjectTriggers().some(function (t) { return String(t.getUniqueId()) === uid; });
+    if (hit) return;
+  }
+  plRequireAdminCaller_();
+}
+
 // บังคับทุกคนที่เข้าด้วยรหัสทางอีเมลให้เข้าสู่ระบบใหม่ (เช่น สงสัยว่า token หลุด) — รันจาก editor
 function plAuthRevokeAll() {
   plRequireAdminCaller_();
@@ -439,7 +451,7 @@ function plAdminSaveUser(tok, o) {
       else if (mine.role !== role) PropertiesService.getScriptProperties().setProperty(plPwMinKey_(email), String(Date.now()));   // เปลี่ยนบทบาท → ให้เข้าสู่ระบบใหม่
       appendLog_([{ email: admin.email, action: created ? "เพิ่มผู้ใช้ (Admin)" : "แก้ผู้ใช้ (Admin)", newVal: email + " · " + role + (username ? " · " + username : "") + (newStatus === "inactive" ? " · ระงับ" : "") }]);
     });
-    plClearUsersCache();
+    plClearUsersCache_();
     var out = { ok: true, created: created, user: { email: email, name: name, role: role, username: username, status: finalStatus, hasPassword: plPwHas_(email) } };
     if (password) out.password = password;
     return out;

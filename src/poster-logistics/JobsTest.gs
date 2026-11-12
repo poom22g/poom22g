@@ -486,7 +486,7 @@ function plTestPhaseD() {
     out.push("FAIL ข้อผิดพลาด: " + (e.stack || e));
   } finally {
     try { [R, R2].forEach(T.reset); } catch (e2) { out.push("FAIL คืนค่าแถวทดสอบไม่สำเร็จ: " + e2); }
-    plClearUsersCache();
+    plClearUsersCache_();
   }
   T.finish("สรุป onEdit");
 }
@@ -637,7 +637,7 @@ function plTestPhaseDNotify() {
     plEffectiveEmail_ = origEffective;
     if (savedHourly == null) p.deleteProperty(hourlyKey); else p.setProperty(hourlyKey, savedHourly);
     if (savedDigest == null) p.deleteProperty(digestKey); else p.setProperty(digestKey, savedDigest);
-    plClearUsersCache();
+    plClearUsersCache_();
   }
   T.finish("สรุปแจ้งเตือน");
 }

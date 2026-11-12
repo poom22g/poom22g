@@ -184,7 +184,8 @@ function plActiveJobs_(ctx) {
 
 // เรียกจาก trigger
 // (ไม่คืนผลลัพธ์ — ฟังก์ชันนี้ถูกเรียกจากหน้าเว็บได้ จึงไม่ส่งรายชื่อผู้รับ/แผนอีเมลออกไป ดูผลได้ใน Execution log)
-function plDailyDigest() {
+function plDailyDigest(e) {
+  plRequireTriggerOrAdmin_(e);
   var r = plDailyDigest_({});
   console.log(JSON.stringify(r));
 }
@@ -333,7 +334,8 @@ function plLogNotify_(what, r) {
  * แจ้งทันที (รอบละชั่วโมง): อ่าน Log ที่เพิ่มหลังรอบก่อน
  * ------------------------------------------------------------------- */
 
-function plHourlyNotify() {
+function plHourlyNotify(e) {
+  plRequireTriggerOrAdmin_(e);
   var r = plHourlyNotify_({});
   console.log(JSON.stringify(r));
   try {

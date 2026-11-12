@@ -15,7 +15,8 @@ var PL_NO_PHOTO_NOTE = "ไม่มีรูปติดตั้ง";
 
 // trigger เรียกตัวนี้ (ตั้งด้วย plInstallTriggers)
 function plOnEditB(e) {
-  if (!e || !e.range) return;
+  // event จริงจากชีตมี range เป็น object ที่มีเมธอด · ค่าที่ส่งมาจาก google.script.run เป็น JSON ล้วน → ไม่ผ่าน
+  if (!e || !e.range || typeof e.range.getRow !== "function" || typeof e.range.getSheet !== "function") return;
   // ใช้อีเมลของ "คนที่แก้" จาก event เท่านั้น · ถ้าชีตไม่ส่งมา ถือว่าไม่รู้ว่าใคร (เอาติ๊กออกไม่ได้)
   var email = "";
   try { email = String((e.user && e.user.getEmail && e.user.getEmail()) || "").trim().toLowerCase(); } catch (x) { }

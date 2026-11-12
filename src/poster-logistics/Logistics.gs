@@ -313,9 +313,12 @@ function plUsers_() {
   return out;
 }
 
-function plClearUsersCache() {
+function plClearUsersCache_() {
   CacheService.getScriptCache().remove("pl_users_v1");
 }
+
+// รันเองจาก editor ได้ · หน้าเว็บเรียกได้เฉพาะเจ้าของ/Admin (ภายในโค้ดใช้ plClearUsersCache_)
+function plClearUsersCache() { plRequireAdminCaller_(); plClearUsersCache_(); }
 
 // ผู้ใช้ที่เปิดหน้าเว็บอยู่ · ไม่มีใน Users = role "" (ดูได้อย่างเดียว)
 // tok = token จากการเข้าสู่ระบบด้วยรหัสทางอีเมล (Auth.gs) — ใช้เมื่อบัญชี Google ระบุตัวไม่ได้หรือไม่อยู่ใน Users
