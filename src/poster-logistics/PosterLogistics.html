@@ -186,7 +186,7 @@
     return a.from.indexOf(job.status || "") >= 0;
   }
   // การกระทำหลักของงานนี้ (ปุ่มบนการ์ด) ตามลำดับความสำคัญ
-  var MAIN_ORDER = ["create", "ackLate", "plan", "shipDate", "shipped", "received", "installed", "proofSent"];
+  var MAIN_ORDER = ["create", "ackLate", "shipDate", "plan", "shipped", "received", "installed", "proofSent"];
   function mainAction(job) {
     for (var i = 0; i < MAIN_ORDER.length; i++) {
       var k = MAIN_ORDER[i];
@@ -224,8 +224,8 @@
   // วันที่ที่ใช้เรียงความเร่งด่วนของการกระทำ
   function dueOf(job, k) {
     if (k === "create" || k === "proofSent" || k === "ackLate") return job.adOn;
-    if (k === "plan") return job.createdAt ? job.createdAt.slice(0, 10) : job.adOn;
-    if (k === "shipDate") return job.installDate || job.adOn;
+    if (k === "shipDate") return job.createdAt ? job.createdAt.slice(0, 10) : job.adOn;
+    if (k === "plan") return job.shipDate || job.adOn;
     if (k === "shipped") return job.shipDate;
     return job.installDate || job.adOn;
   }
@@ -269,7 +269,7 @@
         job.check = job.check || evaluate(job, curSuggest && curSuggest.buffer);
         job.createdAt = job.createdAt || o.createdAt;
         job.week = job.week || o.week;
-        job.slaOverdue = job.status === S().WAIT_MA && o.slaOverdue;
+        job.slaOverdue = job.status === S().WAIT_SHIP && o.slaOverdue;
         D.jobs[i] = job;
         return;
       }
@@ -461,7 +461,7 @@
     ["sla", "ต้องตามงาน", function (j) { return j.slaOverdue; }],
     ["red", "วันไม่สมเหตุสมผล", function (j) { return j.check && j.check.level === "red"; }],
     ["new", "ยังไม่สร้างงาน", function (j) { return !j.status; }],
-    ["WAIT_MA"], ["WAIT_SHIP"], ["WAIT_AE"], ["SCHEDULED"], ["SHIPPED"], ["RESHIP"], ["RECEIVED"], ["INSTALLED"], ["INSTALLED_MANUAL"], ["ON_AIR"], ["CLOSED"]
+    ["WAIT_SHIP"], ["WAIT_MA"], ["WAIT_AE"], ["SCHEDULED"], ["SHIPPED"], ["RESHIP"], ["RECEIVED"], ["INSTALLED"], ["INSTALLED_MANUAL"], ["ON_AIR"], ["CLOSED"]
   ];
   function stageTest(st) {
     if (st[2]) return st[2];
@@ -665,37 +665,40 @@
     if (can("create", j)) {
       out.push(form("create", "สร้างงาน (AE)",
         field("วัน Ad on", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '" required>', true) +
-        '<div class="plx-sub">สร้างแล้วงานจะไปรอ MA แจ้งแผนติดตั้ง จากนั้น Admin กำหนดวันส่ง</div>', "สร้างงาน → ส่งให้ MA"));
+        '<div class="plx-sub">สร้างแล้วงานจะไปรอ Admin กำหนดวันส่ง (หลังคุยโรงพิมพ์) จากนั้น MA แจ้งแผนติดตั้ง</div>', "สร้างงาน → ส่งให้ Admin กำหนดวันส่ง"));
     }
     if (can("ackLate", j)) {
       out.push(form("ackLate", "รับทราบ: ติดตั้งหลังวัน Ad on",
         '<div class="plx-check red">ติดตั้ง ' + th(j.installDate) + " แต่ Ad on " + th(j.adOn) + (j.reason ? "<br>เหตุผล: " + esc(j.reason) : "") + "</div>", "รับทราบ", "warn"));
     }
+    if (can("shipDate", j)) {
+      var firstS = j.status === s.WAIT_SHIP;
+      var beforePlan = firstS || j.status === s.WAIT_MA;
+      var bufS = sg.buffer != null ? sg.buffer : 2;
+      var shipS = j.shipDate || sg.shipDate || "";
+      out.push(form("shipDate", firstS ? "กำหนดวันส่ง (Admin)" : "แก้วันส่ง (Admin)",
+        '<div class="plx-sub">คุยกับโรงพิมพ์ว่าได้วันไหน แล้วใส่วันที่จะส่ง Poster ให้ MA นัดต่อ</div>' +
+        field("วันจัดส่ง", '<input type="date" name="shipDate" value="' + shipS + '">', true) +
+        '<div class="plx-live"></div>' +
+        (beforePlan ? "" : field("เหตุผล (ต้องใส่เมื่อแก้วันส่งหลังกำหนดการครบแล้ว)", '<textarea name="reason"></textarea>')) +
+        '<div class="plx-sub">Ad on ' + th(j.adOn) + " · buffer " + bufS + " วัน" + (j.installDate ? " · MA แจ้งวันติดตั้ง " + th(j.installDate) : "") + (!j.shipDate && shipS ? " · วันที่กรอกให้คือค่าแนะนำ (Ad on − 1 − buffer)" : "") + "</div>",
+        firstS ? "กำหนดวันส่ง → ส่งให้ MA แจ้งแผน" : "บันทึกวันส่ง", "", !firstS));
+    }
     if (can("plan", j)) {
       var settledP = [s.SCHEDULED, s.WAIT_AE, s.RESHIP].indexOf(j.status) >= 0;
       var firstP = j.status === s.WAIT_MA;
+      var instP = j.installDate || (sg.installDate && (!j.shipDate || sg.installDate >= j.shipDate) ? sg.installDate : j.shipDate) || "";
       out.push(form("plan", firstP ? "แจ้งแผนติดตั้ง (MA)" : "แก้แผนติดตั้ง (MA)",
+        '<div class="plx-sub">Admin กำหนดวันส่ง <b>' + th(j.shipDate) + "</b> แล้ว · วันติดตั้งต้องไม่ก่อนวันส่ง</div>" +
         field("จุดจัดส่ง / สถานที่รับงาน", '<input type="text" name="shipTo" value="' + esc(j.shipTo || sg.shipTo || "") + '" list="plx-shipto">' +
           '<datalist id="plx-shipto">' + (sg.shipTo ? '<option value="' + esc(sg.shipTo) + '">' : "") + "</datalist>", true) +
         field("ผู้รับและเบอร์โทร", '<input type="text" name="receiver" value="' + esc(j.receiver || sg.receiver || "") + '">') +
-        field("วันติดตั้ง", '<input type="date" name="installDate" value="' + (j.installDate || sg.installDate || "") + '">', true) +
+        field("วันติดตั้ง", '<input type="date" name="installDate" min="' + (j.shipDate || "") + '" value="' + instP + '">', true) +
         field("ทีมติดตั้ง (ติดเอง หรือส่ง Supplier)", '<select name="team"><option value="">–</option>' + D.teams.map(function (t) { return '<option' + ((j.team || sg.team) === t ? " selected" : "") + ">" + esc(t) + "</option>"; }).join("") + "</select>") +
         '<div class="plx-live"></div>' +
         field("เหตุผล" + (settledP ? " (ต้องใส่เมื่อแก้แผนหลังกำหนดการครบแล้ว)" : " (ต้องใส่ถ้าติดตั้งหลัง Ad on)"), '<textarea name="reason"></textarea>') +
-        '<div class="plx-sub">Ad on ' + th(j.adOn) + (j.shipDate ? " · วันส่ง " + th(j.shipDate) : " · วันส่ง: Admin เป็นคนกำหนด") + (sg.installDate && !j.installDate ? " · วันติดตั้งที่กรอกให้คือค่าแนะนำ (Ad on − 1)" : "") + "</div>",
-        firstP ? "แจ้งแผน → ส่งให้ Admin กำหนดวันส่ง" : "บันทึกแผนติดตั้ง", "", !firstP));
-    }
-    if (can("shipDate", j)) {
-      var firstS = j.status === s.WAIT_SHIP;
-      var bufS = sg.buffer != null ? sg.buffer : 2;
-      var shipS = j.shipDate || (j.installDate ? addDaysKey(j.installDate, -bufS) : "");
-      out.push(form("shipDate", firstS ? "กำหนดวันส่ง (Admin)" : "แก้วันส่ง (Admin)",
-        '<div class="plx-sub">MA แจ้งแผน: ส่งไป <b>' + esc(j.shipTo || "–") + "</b>" + (j.receiver ? " · ผู้รับ " + esc(j.receiver) : "") + " · ติดตั้ง <b>" + th(j.installDate) + "</b>" + (j.team ? " · ทีม " + esc(j.team) : "") + "</div>" +
-        field("วันจัดส่ง", '<input type="date" name="shipDate" value="' + shipS + '">', true) +
-        '<div class="plx-live"></div>' +
-        (firstS ? "" : field("เหตุผล (ต้องใส่เมื่อแก้วันส่ง)", '<textarea name="reason"></textarea>')) +
-        '<div class="plx-sub">Ad on ' + th(j.adOn) + " · buffer " + bufS + " วัน" + (!j.shipDate && shipS ? " · วันที่กรอกให้คือค่าแนะนำ (ติดตั้ง − buffer)" : "") + "</div>",
-        firstS ? "กำหนดวันส่ง" : "บันทึกวันส่ง", "", !firstS));
+        '<div class="plx-sub">Ad on ' + th(j.adOn) + (sg.installDate && !j.installDate ? " · วันติดตั้งที่กรอกให้คือค่าแนะนำ (Ad on − 1)" : "") + "</div>",
+        firstP ? "แจ้งแผน → กำหนดการครบ" : "บันทึกแผนติดตั้ง", "", !firstP));
     }
     if (can("shipped", j)) {
       out.push(form("shipped", j.status === s.RESHIP ? "ส่งใหม่ (ของเสียหายรอบก่อน)" : "ส่งของแล้ว",
