@@ -183,10 +183,10 @@ function plActiveJobs_(ctx) {
  * ------------------------------------------------------------------- */
 
 // เรียกจาก trigger
+// (ไม่คืนผลลัพธ์ — ฟังก์ชันนี้ถูกเรียกจากหน้าเว็บได้ จึงไม่ส่งรายชื่อผู้รับ/แผนอีเมลออกไป ดูผลได้ใน Execution log)
 function plDailyDigest() {
   var r = plDailyDigest_({});
   console.log(JSON.stringify(r));
-  return r;
 }
 
 var PL_DIGEST_MAX_TRIES = 4;          // รอบแรก 08:00 + ลองส่งต่อให้คนที่ยังไม่ได้อีก 3 รอบ (ผ่านรอบรายชั่วโมง)
@@ -335,7 +335,6 @@ function plHourlyNotify() {
   } catch (e) {
     console.error(e && e.stack ? e.stack : e);
   }
-  return r;
 }
 
 var PL_HOURLY_MAX_TRIES = 6;          // ส่งไม่ครบติดกันเกินนี้ → เลื่อนตำแหน่ง Log ต่อไป (ลง Log ว่าเลิกลอง)
@@ -471,7 +470,7 @@ function plRemoveTriggers_(match) {
 }
 
 // ลบ trigger ทั้งหมดของระบบนี้ (ทั้งของชีตจริงและของสำเนา)
-function plRemoveTriggers() { return plRemoveTriggers_(null); }
+function plRemoveTriggers() { plRequireAdminCaller_(); return plRemoveTriggers_(null); }
 
 // only: "edit" = ตั้งเฉพาะ onEdit ของชีตที่ใช้อยู่ตอนนี้ (ใช้ตอนทดสอบบนสำเนา) — ไม่แตะ trigger ตัวอื่น
 function plInstallTriggers_(only) {
@@ -494,6 +493,7 @@ function plInstallTriggers_(only) {
 // ตั้ง trigger ทั้งชุดบนชีตจริง — ไม่ยอมทำตอนอยู่ในโหมดทดสอบ
 // (กัน trigger ตามเวลาไปผูกกับสำเนา และกันลบ trigger ของชีตจริงโดยไม่ตั้งใจ)
 function plInstallTriggers() {
+  plRequireAdminCaller_();
   if (plIsTestMode_()) {
     throw new Error("ตอนนี้อยู่ในโหมดทดสอบ (ใช้สำเนาชีต) — รัน plUiTestOff ก่อน แล้วค่อยรัน plInstallTriggers · ถ้าจะลองติ๊กบนสำเนาใช้ plTestInstallEditTrigger");
   }

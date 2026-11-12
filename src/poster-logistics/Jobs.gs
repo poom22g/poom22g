@@ -494,7 +494,7 @@ function plListPosterJobs_(user, filters) {
     return (ga.week || "9999") < (gb.week || "9999") ? -1 : (ga.week || "9999") > (gb.week || "9999") ? 1 : ga.customer < gb.customer ? -1 : 1;
   });
   return {
-    ok: true, me: { email: user.email, name: user.name, role: user.role },
+    ok: true, me: { email: user.email, name: user.name, role: user.role, via: user.via || "" },
     testMode: plIsTestMode_(), actions: PL_ACTIONS, status: Config.STATUS, teams: Config.INSTALL_TEAMS,
     conditions: Config.CONDITIONS, goLive: Config.GO_LIVE_MONTH,
     jobs: jobs, groups: order.map(function (k) { return groups[k]; }),
@@ -592,18 +592,20 @@ function plGetUi() {
 }
 
 /* ---------------------------------------------------------------------
- * API สาธารณะ — ตรวจผู้ใช้จาก Session ทุกครั้ง ไม่เชื่อค่าจากหน้าเว็บ
+ * API สาธารณะ — ตรวจผู้ใช้ที่ server ทุกครั้ง ไม่เชื่อค่าจากหน้าเว็บ
+ * หน้าเว็บเรียกผ่าน plCall(token, ชื่อคำสั่ง, [ค่า]) ใน Auth.gs
+ * ฟังก์ชันชื่อเดิมข้างล่างยังเก็บไว้ (ใช้ได้เฉพาะคนที่ระบบเห็นบัญชี Google) — ไม่รู้ว่าเป็นใคร = LOGIN_REQUIRED
  * ------------------------------------------------------------------- */
 
-function listPosterJobs(filters) { return plApi_(function () { return plListPosterJobs_(plCurrentUser_(), filters); }); }
-function getJob(rowKey) { return plApi_(function () { return plGetJob_(plCurrentUser_(), rowKey); }); }
-function getShipToOptions(iata) { return plApi_(function () { return plGetShipToOptions_(plCurrentUser_(), iata); }); }
-function createJob(rowKey, payload, ver) { return plApi_(function () { return plCreateJob_(plCurrentUser_(), rowKey, payload, ver); }); }
-function updateAdOn(rowKey, payload, ver) { return plApi_(function () { return plUpdateAdOn_(plCurrentUser_(), rowKey, payload, ver); }); }
-function confirmSchedule(rowKey, payload, ver) { return plApi_(function () { return plConfirmSchedule_(plCurrentUser_(), rowKey, payload, ver); }); }
-function acknowledgeLate(rowKey, ver) { return plApi_(function () { return plAcknowledgeLate_(plCurrentUser_(), rowKey, ver); }); }
-function markShipped(rowKey, payload, ver) { return plApi_(function () { return plMarkShipped_(plCurrentUser_(), rowKey, payload, ver); }); }
-function markReceived(rowKey, payload, ver) { return plApi_(function () { return plMarkReceived_(plCurrentUser_(), rowKey, payload, ver); }); }
-function markInstalled(rowKey, payload, ver) { return plApi_(function () { return plMarkInstalled_(plCurrentUser_(), rowKey, payload, ver); }); }
-function uploadJobPhoto(rowKey, file) { return plApi_(function () { return plUploadJobPhoto_(plCurrentUser_(), rowKey, file); }); }
-function markProofSent(rowKey, ver) { return plApi_(function () { return plMarkProofSent_(plCurrentUser_(), rowKey, ver); }); }
+function listPosterJobs(filters) { return plCall("", "listPosterJobs", [filters]); }
+function getJob(rowKey) { return plCall("", "getJob", [rowKey]); }
+function getShipToOptions(iata) { return plCall("", "getShipToOptions", [iata]); }
+function createJob(rowKey, payload, ver) { return plCall("", "createJob", [rowKey, payload, ver]); }
+function updateAdOn(rowKey, payload, ver) { return plCall("", "updateAdOn", [rowKey, payload, ver]); }
+function confirmSchedule(rowKey, payload, ver) { return plCall("", "confirmSchedule", [rowKey, payload, ver]); }
+function acknowledgeLate(rowKey, ver) { return plCall("", "acknowledgeLate", [rowKey, ver]); }
+function markShipped(rowKey, payload, ver) { return plCall("", "markShipped", [rowKey, payload, ver]); }
+function markReceived(rowKey, payload, ver) { return plCall("", "markReceived", [rowKey, payload, ver]); }
+function markInstalled(rowKey, payload, ver) { return plCall("", "markInstalled", [rowKey, payload, ver]); }
+function uploadJobPhoto(rowKey, file) { return plCall("", "uploadJobPhoto", [rowKey, file]); }
+function markProofSent(rowKey, ver) { return plCall("", "markProofSent", [rowKey, ver]); }

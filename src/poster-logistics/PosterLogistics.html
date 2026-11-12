@@ -97,6 +97,14 @@
   .plx-pick input { display:none; }
   .plx-msg { border-radius:10px; padding:10px 12px; font-size:13px; }
   .plx-msg.err { background:#fdecea; color:#a12a1d; border:1px solid #e6a39b; }
+  .plx-login { max-width:420px; margin:8px auto; display:flex; flex-direction:column; gap:12px; }
+  .plx-login h3 { margin:0; font-size:16px; color:var(--ink); }
+  .plx-login p { margin:0; font-size:13px; color:var(--text-dim); line-height:1.5; }
+  .plx-login input { width:100%; min-height:44px; border:1px solid var(--border); border-radius:10px; padding:8px 12px; font:inherit; font-size:16px; color:var(--ink); background:#fff; }
+  .plx-login input.code { letter-spacing:8px; text-align:center; font-size:22px; font-weight:700; }
+  .plx-login .plx-btn { min-height:44px; font-size:14px; }
+  .plx-login .alt { display:flex; gap:14px; flex-wrap:wrap; }
+  .plx-login .alt button { border:0; background:none; padding:0; font:inherit; font-size:13px; color:var(--accent-strong); text-decoration:underline; cursor:pointer; }
   .plx-msg.ok { background:#e5f5ec; color:#1d6b3f; border:1px solid #9fd3b3; }
   .plx-msg.warn { background:#fff4e0; color:#7a4a00; border:1px solid #e8b45c; }
   .plx-hist { display:flex; flex-direction:column; gap:6px; font-size:12px; }
@@ -143,14 +151,16 @@
   var view = "mine", month = "", stage = "", q = "", actAs = "";
   var cur = null, curHist = null, curSuggest = null, sending = false, pendPhotos = {};
   var curMsg = null; // ข้อความผลบันทึกล่าสุด · คงไว้ตอนวาดลิ้นชักใหม่ (กันหน้าเลื่อนแล้วกดพลาด)
-  var CACHE_KEY = "plx_cache_v1";
+  var CACHE_KEY = "plx_cache_v1", TOK_KEY = "plx_tok", EMAIL_KEY = "plx_email";
+  // เข้าสู่ระบบ: token ได้จากรหัสทางอีเมล เก็บในเครื่อง ส่งไปกับทุกคำสั่ง (server ตรวจเองทุกครั้ง)
+  var tok = "", needsLogin = false, login = { step: "email", email: "", msg: "", bad: false, busy: false };
   var MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
   var DOW = ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."];
   var ERR_TEXT = {
     FORBIDDEN: "คุณไม่มีสิทธิ์ทำรายการนี้", BAD_STATE: "สถานะงานเปลี่ยนไปแล้ว ทำรายการนี้ไม่ได้",
     CONFLICT: "มีคนแก้งานนี้ไปก่อนแล้ว", NEED_REASON: "ต้องใส่เหตุผล", INVALID: "ข้อมูลไม่ถูกต้อง",
     OLD_ROW: "งานเดือนเก่า ระบบไม่แก้", NOT_FOUND: "ไม่พบงานนี้ในชีตแล้ว", AMBIGUOUS: "พบงานซ้ำหลายแถว",
-    BUSY: "มีคนกำลังบันทึกอยู่ ลองใหม่อีกครั้ง"
+    BUSY: "มีคนกำลังบันทึกอยู่ ลองใหม่อีกครั้ง", LOGIN_REQUIRED: "กรุณาเข้าสู่ระบบใหม่"
   };
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
@@ -158,6 +168,7 @@
   function $$(sel, el) { return Array.prototype.slice.call((el || root).querySelectorAll(sel)); }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { } }
   function pad(n) { return (n < 10 ? "0" : "") + n; }
   function todayKey() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
   function addDaysKey(k, n) { var p = k.split("-"); var d = new Date(+p[0], +p[1] - 1, +p[2] + n, 12); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
@@ -229,15 +240,17 @@
     google.script.run
       .withSuccessHandler(function (r) {
         loading = false;
+        if (r && r.code === "LOGIN_REQUIRED") { requireLogin(tok ? "หมดเวลาเข้าสู่ระบบ หรือสิทธิ์ถูกยกเลิก กรุณาเข้าสู่ระบบใหม่" : ""); return; }
         if (!r || !r.ok) { renderAll(); toast((r && r.message) || "โหลดข้อมูลไม่สำเร็จ", true); return; }
         D = r; me = r.me; fromCache = false;
+        if (needsLogin) { needsLogin = false; showLogin(false); }
         lsSet(CACHE_KEY, JSON.stringify(r));
         if (cur) { var j = findJob(cur.row, cur.sign); if (j) cur = j; }
         renderAll();
         if (cur && isOpen()) renderDrawer();
       })
       .withFailureHandler(function (e) { loading = false; renderAll(); toast("เชื่อมต่อไม่สำเร็จ: " + (e && e.message ? e.message : e), true); })
-      .listPosterJobs({});
+      .plCall(tok, "listPosterJobs", [{}]);
   }
   function findJob(row, sign) {
     if (!D) return null;
@@ -271,6 +284,93 @@
     return { level: level, issues: issues };
   }
 
+  /* ------------------------- เข้าสู่ระบบ ------------------------- */
+  // ซ่อน/แสดงส่วนงาน กับกล่องเข้าสู่ระบบ
+  function showLogin(on) {
+    [".plx-vseg-wrap", ".plx-bar", ".plx-chips", ".plx-list"].forEach(function (sel) { var el = $(sel); if (el) el.style.display = on ? "none" : ""; });
+    var box = $(".plx-loginbox");
+    if (box) box.style.display = on ? "" : "none";
+  }
+  // ล้าง token + ข้อมูลงานที่ค้างในเครื่อง แล้วเปิดกล่องเข้าสู่ระบบ
+  function requireLogin(msg) {
+    if (!root) return;
+    tok = ""; lsDel(TOK_KEY); lsDel(CACHE_KEY);
+    D = null; fromCache = false; me = { role: "" }; actAs = "";
+    if (isOpen()) closeDrawer();
+    var was = needsLogin;
+    needsLogin = true;
+    if (!was || msg) { login.step = "email"; login.msg = msg || ""; login.bad = false; login.busy = false; }
+    showLogin(true);
+    renderHead();
+    renderLogin();
+  }
+  function renderLogin() {
+    var box = $(".plx-loginbox");
+    if (!box) return;
+    var m = login.msg ? '<div class="plx-msg ' + (login.bad ? "err" : "ok") + '">' + esc(login.msg) + "</div>" : "";
+    var h;
+    if (login.step === "email") {
+      h = '<form class="plx-login" novalidate><h3>เข้าสู่ระบบ</h3>' +
+        "<p>กรอกอีเมลที่ลงทะเบียนไว้กับ Admin ระบบจะส่งรหัส 6 หลักไปให้ทางอีเมล</p>" + m +
+        '<input type="email" name="email" autocomplete="email" inputmode="email" placeholder="you@example.com" aria-label="อีเมล" value="' + esc(login.email) + '">' +
+        '<button type="submit" class="plx-btn pri"' + (login.busy ? " disabled" : "") + ">" + (login.busy ? "กำลังส่งรหัส…" : "ส่งรหัสเข้าสู่ระบบ") + "</button></form>";
+    } else {
+      h = '<form class="plx-login" novalidate><h3>กรอกรหัส 6 หลัก</h3>' +
+        "<p>รหัสถูกส่งไปที่ <b>" + esc(login.email) + "</b> ใช้ได้ 10 นาที</p>" + m +
+        '<input type="text" name="code" class="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" placeholder="••••••" aria-label="รหัส 6 หลัก">' +
+        '<button type="submit" class="plx-btn pri"' + (login.busy ? " disabled" : "") + ">" + (login.busy ? "กำลังตรวจรหัส…" : "เข้าสู่ระบบ") + "</button>" +
+        '<div class="alt"><button type="button" data-l="resend">ขอรหัสใหม่</button><button type="button" data-l="change">เปลี่ยนอีเมล</button></div></form>';
+    }
+    box.innerHTML = h;
+    var form = $("form", box), inp = $("input", box);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (login.busy) return;
+      if (login.step === "email") sendCode(inp.value); else verifyCode(inp.value);
+    });
+    var rs = $('[data-l="resend"]', box), ch = $('[data-l="change"]', box);
+    if (rs) rs.addEventListener("click", function () { if (!login.busy) sendCode(login.email); });
+    if (ch) ch.addEventListener("click", function () { login.step = "email"; login.msg = ""; renderLogin(); });
+    if (!login.busy) { try { inp.focus(); } catch (e) { } }
+  }
+  function authCall(fn, args, cb) {
+    var r = google.script.run
+      .withSuccessHandler(cb)
+      .withFailureHandler(function (e) { cb({ ok: false, message: "เชื่อมต่อไม่สำเร็จ: " + (e && e.message ? e.message : e) }); });
+    r[fn].apply(r, args);
+  }
+  function sendCode(email) {
+    email = String(email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { login.msg = "กรอกอีเมลให้ถูกต้อง"; login.bad = true; renderLogin(); return; }
+    login.email = email; lsSet(EMAIL_KEY, email);
+    login.busy = true; login.msg = ""; renderLogin();
+    authCall("plAuthRequestCode", [email], function (r) {
+      login.busy = false;
+      if (r && r.ok) { login.step = "code"; login.msg = r.message || "ส่งรหัสแล้ว"; login.bad = false; }
+      else { login.msg = (r && r.message) || "ส่งรหัสไม่สำเร็จ"; login.bad = true; }
+      renderLogin();
+    });
+  }
+  function verifyCode(code) {
+    code = String(code || "").replace(/\D/g, "");
+    if (code.length !== 6) { login.msg = "กรอกรหัสให้ครบ 6 หลัก"; login.bad = true; renderLogin(); return; }
+    login.busy = true; login.msg = ""; renderLogin();
+    authCall("plAuthVerifyCode", [login.email, code], function (r) {
+      login.busy = false;
+      if (r && r.ok && r.token) {
+        tok = r.token; lsSet(TOK_KEY, tok);
+        me = r.me || me;
+        login.step = "email"; login.msg = "";
+        needsLogin = false; showLogin(false);
+        renderAll();
+        refresh();
+        return;
+      }
+      login.msg = (r && r.message) || "เข้าสู่ระบบไม่สำเร็จ"; login.bad = true;
+      renderLogin();
+    });
+  }
+
   /* ------------------------- วาดหน้าหลัก ------------------------- */
   PLX.mount = function (el, o) {
     root = el; opts = o || {};
@@ -278,15 +378,19 @@
     root.innerHTML =
       '<div class="plx">' +
         '<div class="bl-card"><div class="plx-head"><div><div class="bl-title">🚚 ติดตามขนส่ง Poster</div><div class="plx-who"></div><div class="plx-src"></div></div>' +
-        '<div class="plx-hbtns"><button type="button" class="plx-btn" data-a="refresh">🔄 รีเฟรช</button><button type="button" class="plx-btn" data-a="back">← มุมมองเดิม</button></div></div>' +
+        '<div class="plx-hbtns"><button type="button" class="plx-btn" data-a="refresh">🔄 รีเฟรช</button><button type="button" class="plx-btn" data-a="logout" style="display:none">ออกจากระบบ</button><button type="button" class="plx-btn" data-a="back">← มุมมองเดิม</button></div></div>' +
         '<div class="plx-testbox"></div>' +
         '<div class="plx-vseg-wrap"><div class="bl-vseg" role="tablist"></div></div>' +
         '<div class="plx-bar"></div><div class="plx-chips"></div></div>' +
         '<div class="plx-list"></div>' +
+        '<div class="bl-card plx-loginbox" style="display:none"></div>' +
       '</div>' +
       '<div class="plx-back"></div><aside class="plx-drawer" aria-hidden="true"><div class="plx-dh"><div class="t"></div><button type="button" class="plx-x" aria-label="ปิด">✕</button></div><div class="plx-db"></div></aside>' +
       '<div class="plx-toast"></div>';
     $('[data-a="refresh"]').addEventListener("click", refresh);
+    $('[data-a="logout"]').addEventListener("click", function () { requireLogin("ออกจากระบบแล้ว"); });
+    tok = lsGet(TOK_KEY) || "";
+    login.email = lsGet(EMAIL_KEY) || "";
     $('[data-a="back"]').addEventListener("click", function () { closeDrawer(); if (opts.back) opts.back(); });
     $(".plx-back").addEventListener("click", closeDrawer);
     $(".plx-x").addEventListener("click", closeDrawer);
@@ -300,16 +404,20 @@
   function renderHead() {
     if (!root) return;
     var who = me && me.email ? (esc(me.name || me.email) + " · บทบาท " + esc(me.role || "ไม่มีในรายชื่อ Users (ดูได้อย่างเดียว)")) : "กำลังตรวจผู้ใช้…";
+    if (needsLogin) who = "ยังไม่ได้เข้าสู่ระบบ";
     $(".plx-who").innerHTML = who;
+    $('[data-a="logout"]').style.display = !needsLogin && me && me.via === "otp" ? "" : "none";
     var src = $(".plx-src");
     if (loading) { src.className = "plx-src"; src.textContent = D ? "กำลังโหลดข้อมูลล่าสุด…" + (fromCache ? " (ตอนนี้แสดงข้อมูลจาก cache " + D.fetchedAt + ")" : "") : "กำลังโหลด…"; }
     else if (D) { src.className = "plx-src" + (fromCache ? " cache" : ""); src.textContent = (fromCache ? "ข้อมูลจาก cache " : "ข้อมูลล่าสุดจากชีต ") + D.fetchedAt; }
+    if (needsLogin || (!loading && !D)) { src.className = "plx-src"; src.textContent = ""; }
     $(".plx-testbox").innerHTML = D && D.testMode ? '<div class="plx-test">โหมดทดสอบ: ระบบกำลังอ่าน/เขียน "สำเนาชีต" ไม่ใช่ชีตจริง</div>' : "";
   }
 
   function renderAll() {
     if (!root) return;
     renderHead();
+    if (needsLogin) return;
     var V = [["mine", "งานของฉัน"], ["all", "ทุกงาน"], ["cal", "ปฏิทิน"], ["ship", "จุดจัดส่ง"]];
     var seg = $(".bl-vseg");
     seg.innerHTML = V.map(function (v) { return '<button type="button" data-v="' + v[0] + '" class="' + (view === v[0] ? "on" : "") + '">' + v[1] + "</button>"; }).join("");
@@ -498,13 +606,14 @@
     google.script.run
       .withSuccessHandler(function (r) {
         if (cur !== want) return;
+        if (r && r.code === "LOGIN_REQUIRED") { requireLogin("กรุณาเข้าสู่ระบบใหม่"); return; }
         if (!r || !r.ok) { curHist = []; renderDrawer(); return; }
         curHist = r.history; curSuggest = r.suggest;
         if (r.job.ver !== cur.ver) { replaceJob(r.job); cur = findJob(r.job.row, r.job.sign) || r.job; renderList(); }
         renderDrawer();
       })
       .withFailureHandler(function () { if (cur === want) { curHist = []; renderDrawer(); } })
-      .getJob(cur.rowKey);
+      .plCall(tok, "getJob", [cur.rowKey]);
   }
 
   function kv(label, val) { return val ? "<dt>" + label + "</dt><dd>" + val + "</dd>" : ""; }
@@ -679,8 +788,10 @@
   function gs(fn) {
     var args = Array.prototype.slice.call(arguments, 1);
     return new Promise(function (resolve) {
-      var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(function (e) { resolve({ ok: false, code: "NETWORK", message: "เชื่อมต่อไม่สำเร็จ: " + (e && e.message ? e.message : e) }); });
-      r[fn].apply(r, args);
+      var r = google.script.run
+        .withSuccessHandler(function (x) { if (x && x.code === "LOGIN_REQUIRED") requireLogin("กรุณาเข้าสู่ระบบใหม่ แล้วทำรายการอีกครั้ง"); resolve(x); })
+        .withFailureHandler(function (e) { resolve({ ok: false, code: "NETWORK", message: "เชื่อมต่อไม่สำเร็จ: " + (e && e.message ? e.message : e) }); });
+      r.plCall(tok, fn, args);
     });
   }
   function uploadAll(key, job, progress) {

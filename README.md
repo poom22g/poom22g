@@ -51,6 +51,7 @@ npm run create        # สร้าง Apps Script project ใหม่ (standa
 | ไฟล์ | หน้าที่ |
 |---|---|
 | `Logistics.gs` | Config, หาคอลัมน์จากชื่อหัว, แปลงวันที่, lock, Log, สิทธิ์ตามบทบาท, `plSelfTest` |
+| `Auth.gs` | เข้าสู่ระบบตามบทบาท (บัญชี Google หรืออีเมล + รหัส 6 หลัก), ประตู `plCall` ของหน้าเว็บ, ตัวกันฟังก์ชันดูแลระบบ |
 | `Jobs.gs` | state machine ของงาน (สร้างงาน → ยืนยันกำหนดการ → ส่ง → รับ → ติดตั้ง → On air → ปิดงาน), อัปโหลดรูปเข้า Drive |
 | `Notify.gs` | อีเมลสรุปประจำวัน 08:00, แจ้งเตือนรายชั่วโมง, ติดตั้ง/ลบ trigger |
 | `Triggers.gs` | onEdit ของคอลัมน์ B "Status" (ติ๊กมือ / เอาติ๊กออก) |
@@ -62,4 +63,13 @@ npm run create        # สร้าง Apps Script project ใหม่ (standa
 - **รหัสชีตถูกตัดออก** — `PL_REAL_SPREADSHEET_ID_` ใน `Logistics.gs` และ `PL_TEST_SPREADSHEET_DEFAULT` ใน `JobsTest.gs` เป็น placeholder ต้องใส่ค่าจริงก่อนใช้งาน และอย่า commit ค่าจริงกลับเข้า repo นี้
 - **ไม่ครบทั้งโปรเจกต์** — โค้ดชุดนี้เรียกใช้ฟังก์ชันจาก `Code.gs` และถูกโหลดจาก `Dashboard.html` ของโปรเจกต์เดิม ซึ่งไม่ได้อยู่ใน repo นี้
 - **ไม่ถูก `clasp push`** — โฟลเดอร์นี้อยู่ใน `.claspignore` เพื่อกันการ push ไปทับโปรเจกต์จริงโดยไม่ตั้งใจ
-- Script Properties ที่ใช้: `PHOTO_FOLDER_ID`, `OPS_HEAD_EMAIL` (ไม่บังคับ), `NOTIFY_REDIRECT_TO` (ไม่บังคับ), `WEBAPP_URL` (ไม่บังคับ), `PL_UI_TEST_SPREADSHEET_ID` (เฉพาะโหมดทดสอบ)
+- Script Properties ที่ใช้: `PL_AUTH_SECRET` (ระบบสร้างเอง ห้ามเปิดเผย), `PHOTO_FOLDER_ID`, `OPS_HEAD_EMAIL` (ไม่บังคับ), `NOTIFY_REDIRECT_TO` (ไม่บังคับ), `WEBAPP_URL` (ไม่บังคับ), `PL_UI_TEST_SPREADSHEET_ID` (เฉพาะโหมดทดสอบ)
+
+### การเข้าสู่ระบบ
+
+- บทบาทของแต่ละคนกำหนดในแท็บ `Users` ของชีต (email | ชื่อ | บทบาท) — ลบออกจากแท็บ = หมดสิทธิ์ทันที
+- ถ้าระบบเห็นบัญชี Google ของผู้ใช้และอีเมลอยู่ใน `Users` → ใช้ได้เลย
+- นอกนั้นต้องเข้าสู่ระบบด้วยอีเมล + รหัส 6 หลักที่ส่งทางอีเมล (ใช้ได้ 10 นาที, ผิดได้ 5 ครั้ง, ขอใหม่ได้นาทีละครั้ง) แล้วได้ token อายุ 30 วัน
+- ไม่รู้ว่าเป็นใคร → ทุกคำสั่งของหน้าเว็บตอบ `LOGIN_REQUIRED` (รวมการอ่านรายการงาน)
+- ฟังก์ชันดูแลระบบ (`plInstallTriggers`, `plRemoveTriggers`, `plUiTestOn/Off`, `setupSheets`, `plSelfTest`, ชุดทดสอบ) รันได้เฉพาะเจ้าของสคริปต์จาก editor หรือบัญชี Google ที่เป็น Admin
+- `plAuthRevokeAll` (รันจาก editor) = บังคับทุกคนที่เข้าด้วยรหัสทางอีเมลให้เข้าสู่ระบบใหม่

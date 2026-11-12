@@ -7,6 +7,7 @@
 var PL_TEST_SPREADSHEET_DEFAULT = "YOUR_TEST_SPREADSHEET_ID";  // [TEST] Poster Logistics phase B - ลบได้
 
 function plTestPhaseB() {
+  plRequireAdminCaller_();
   var testId = PropertiesService.getScriptProperties().getProperty("PL_TEST_SPREADSHEET_ID") || PL_TEST_SPREADSHEET_DEFAULT;
   if (testId === PL_REAL_SPREADSHEET_ID_) throw new Error("ห้ามรันชุดทดสอบบนชีตจริง");
   var realId = Config.SPREADSHEET_ID;
@@ -179,6 +180,7 @@ function plTestPhaseB() {
 var PL_TEST_PHOTO_FOLDER_NAME = "[TEST] รูป Poster Logistics - ลบได้";
 
 function plUiTestOn() {
+  plRequireAdminCaller_();
   var p = PropertiesService.getScriptProperties();
   p.setProperty("PL_UI_TEST_SPREADSHEET_ID", PL_TEST_SPREADSHEET_DEFAULT);
   var it = DriveApp.getRootFolder().getFoldersByName(PL_TEST_PHOTO_FOLDER_NAME);
@@ -189,6 +191,7 @@ function plUiTestOn() {
 }
 
 function plUiTestOff() {
+  plRequireAdminCaller_();
   var p = PropertiesService.getScriptProperties();
   p.deleteProperty("PL_UI_TEST_SPREADSHEET_ID");
   if (p.getProperty("PHOTO_FOLDER_ID") && p.getProperty("PHOTO_FOLDER_ID") === p.getProperty("PL_TEST_PHOTO_FOLDER_ID")) p.deleteProperty("PHOTO_FOLDER_ID");
@@ -202,6 +205,7 @@ function plUiTestOff() {
 var PL_TEST_TINY_JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAkADADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDHSTs/51KVyMjkVWqSKRkYDqCeRXpzg94nApdyQrQFrtP+EJBGft+M/wDTL/69H/CEgDP2/p/0y/8Ar1y+2Rt7JnGYCjJ4FQu+7gcCiV2dznseBTK64QtqzBvsFKv3h9aOtTRxhfmfk+lVKSihJXPYVI2jkdKGI2nkdK8kMzH+I/nQJmH8R/OvO9kzs9qim33j9aSrMiLJ8w4b+dVyCpwRg16MJqSORxsSxgBcjqaUnr/n1/woorJ/EylsB/z+tAoopAAPT/PpSkBhg0UUnuM//9k=";
 
 function plTestUpload() {
+  plRequireAdminCaller_();
   var p = PropertiesService.getScriptProperties();
   if (!p.getProperty("PL_UI_TEST_SPREADSHEET_ID")) throw new Error("ต้องรัน plUiTestOn ก่อน");
   if (p.getProperty("PHOTO_FOLDER_ID") !== p.getProperty("PL_TEST_PHOTO_FOLDER_ID")) throw new Error("PHOTO_FOLDER_ID ไม่ใช่โฟลเดอร์ทดสอบ");
@@ -320,6 +324,7 @@ function plTestDEnv_(need) {
 }
 
 function plTestPhaseD() {
+  plRequireAdminCaller_();
   var T = plTestDEnv_(2);
   var out = T.out, check = T.check, S = T.S, ctx = T.ctx, sh = T.sh, colB = T.colB, ss = T.ss, job = T.job, logHas = T.logHas;
   var AE = T.AE, OPS = T.OPS, INS = T.INS;
@@ -445,6 +450,7 @@ function plTestPhaseD() {
 }
 
 function plTestPhaseDNotify() {
+  plRequireAdminCaller_();
   var T = plTestDEnv_(4);
   var out = T.out, check = T.check, call = T.call, S = T.S, ctx = T.ctx, sh = T.sh, colB = T.colB, job = T.job, logHas = T.logHas, has = T.has, p = T.p;
   var AE = T.AE, OPS = T.OPS, INS = T.INS;
@@ -586,6 +592,7 @@ function plTestPhaseDNotify() {
 
 // ตั้งเฉพาะ trigger onEdit บนสำเนา (ไว้ลองติ๊ก B ในหน้าชีตจริง ๆ) · ลบด้วย plRemoveTriggers
 function plTestInstallEditTrigger() {
+  plRequireAdminCaller_();
   if (!PropertiesService.getScriptProperties().getProperty("PL_UI_TEST_SPREADSHEET_ID")) throw new Error("ต้องรัน plUiTestOn ก่อน");
   return plInstallTriggers_("edit");
 }

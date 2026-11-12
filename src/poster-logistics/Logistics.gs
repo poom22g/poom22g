@@ -313,11 +313,21 @@ function plClearUsersCache() {
 }
 
 // ผู้ใช้ที่เปิดหน้าเว็บอยู่ · ไม่มีใน Users = role "" (ดูได้อย่างเดียว)
-function plCurrentUser_() {
+// tok = token จากการเข้าสู่ระบบด้วยรหัสทางอีเมล (Auth.gs) — ใช้เมื่อบัญชี Google ระบุตัวไม่ได้หรือไม่อยู่ใน Users
+function plCurrentUser_(tok) {
   var email = "";
   try { email = String(Session.getActiveUser().getEmail() || "").trim().toLowerCase(); } catch (e) { }
-  var u = email ? plUsers_()[email] : null;
-  return { email: email, name: u ? u.name : "", role: u ? u.role : "" };
+  var users = email ? plUsers_() : null;
+  var u = users ? users[email] : null;
+  if (u) return { email: email, name: u.name, role: u.role, via: "google" };
+  if (tok) {
+    var te = plAuthEmailFromToken_(tok);
+    if (te) {
+      users = users || plUsers_();
+      if (users[te]) return { email: te, name: users[te].name, role: users[te].role, via: "otp" };
+    }
+  }
+  return { email: email, name: "", role: "", via: email ? "google" : "" };
 }
 
 // ตรวจว่า user มีบทบาทใน roles ไหม (Admin ผ่านทุกอย่าง) · ไม่ผ่าน → throw FORBIDDEN
@@ -334,9 +344,9 @@ function requireRole_(user, roles) {
 }
 
 // เรียกจากหน้าเว็บ: บอกว่าใครเปิดอยู่และมีบทบาทอะไร
-function getMyContext() {
-  var u = plCurrentUser_();
-  return { email: u.email, name: u.name, role: u.role, roles: Config.ROLES };
+function getMyContext(tok) {
+  var u = plCurrentUser_(tok);
+  return { email: u.email, name: u.name, role: u.role, via: u.via, roles: Config.ROLES };
 }
 
 /* ---------------------------------------------------------------------
@@ -344,6 +354,7 @@ function getMyContext() {
  * ------------------------------------------------------------------- */
 
 function setupSheets() {
+  plRequireAdminCaller_();
   var ss = plSpreadsheet_();
   var report = [];
 
@@ -436,6 +447,7 @@ function plSetListValidation_(range, list, strict) {
  * ------------------------------------------------------------------- */
 
 function plSelfTest() {
+  plRequireAdminCaller_();
   var out = {};
   var jobs = plSheet_(Config.SHEET_JOBS);
   var jm = getColMap_(jobs, plValues_(Config.JOB_COLS).concat(plValues_(Config.NEW_JOB_COLS)));
@@ -486,7 +498,7 @@ function plWhoAmI() {
   try { r.active = Session.getActiveUser().getEmail(); } catch (e) { r.activeError = String(e); }
   try { r.effective = Session.getEffectiveUser().getEmail(); } catch (e) { r.effectiveError = String(e); }
   Logger.log(JSON.stringify(r));
-  return r;
+  return plIsAdminCaller_() ? r : null;      // ไม่ส่งอีเมลเจ้าของให้คนที่เรียกผ่านเว็บโดยไม่ล็อกอิน
 }
 
 function plColLetter_(n) {
