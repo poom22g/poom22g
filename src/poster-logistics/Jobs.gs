@@ -296,41 +296,45 @@ var PL_S = Config.STATUS;
 // ตารางสิทธิ์ + สถานะเริ่มต้นของแต่ละการกระทำ — ใช้ทั้งฝั่ง server (ตรวจจริง) และส่งให้หน้าจอใช้ซ่อน/แสดงปุ่ม
 var PL_ACTIONS = {
   create:      { label: "สร้างงาน", roles: ["AE"], from: [""] },
-  updateAdOn:  { label: "แก้วัน Ad on", roles: ["AE"], from: [PL_S.WAIT_OPS, PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.SHIPPED, PL_S.RESHIP, PL_S.RECEIVED, PL_S.INSTALLED, PL_S.INSTALLED_MANUAL] },
-  confirm:     { label: "ยืนยันกำหนดการ", roles: ["Ops"], from: [PL_S.WAIT_OPS, PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.RESHIP] },
+  updateAdOn:  { label: "แก้วัน Ad on", roles: ["AE"], from: [PL_S.WAIT_MA, PL_S.WAIT_SHIP, PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.SHIPPED, PL_S.RESHIP, PL_S.RECEIVED, PL_S.INSTALLED, PL_S.INSTALLED_MANUAL] },
+  plan:        { label: "แจ้งแผนติดตั้ง", roles: ["MA"], from: [PL_S.WAIT_MA, PL_S.WAIT_SHIP, PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.RESHIP] },
+  shipDate:    { label: "กำหนดวันส่ง", roles: [], from: [PL_S.WAIT_SHIP, PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.RESHIP] },   // roles ว่าง = Admin เท่านั้น
   ackLate:     { label: "รับทราบติดตั้งช้า", roles: ["AE"], from: [PL_S.WAIT_AE] },
   shipped:     { label: "ส่งแล้ว", roles: ["Ops", "Production"], from: [PL_S.SCHEDULED, PL_S.RESHIP] },
   received:    { label: "ได้รับของแล้ว", roles: ["Ops", "MA"], from: [PL_S.SHIPPED] },
-  installed:   { label: "ติดตั้งแล้ว", roles: ["Installer", "Ops"], from: [PL_S.RECEIVED] },
+  installed:   { label: "ติดตั้งแล้ว", roles: ["Installer", "Ops", "MA"], from: [PL_S.RECEIVED] },
   proofSent:   { label: "ส่ง Proof แล้ว", roles: ["AE"], from: [PL_S.ON_AIR] }
 };
+// สถานะที่กำหนดการครบแล้ว (มีทั้งวันติดตั้งและวันส่ง) — แก้หลังจากนี้ต้องใส่เหตุผล
+var PL_SETTLED = [PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.RESHIP];
 function plAct_(key, extra) {
   var a = PL_ACTIONS[key], o = { action: a.label, roles: a.roles, from: a.from };
   Object.keys(extra).forEach(function (k) { o[k] = extra[k]; });
   return o;
 }
 
-// AE สร้างงาน: แถวป้ายที่มีอยู่แล้วในแท็บ 2026 · ใส่วัน Ad on → "รอ Ops รับงาน"
+// AE สร้างงาน: แถวป้ายที่มีอยู่แล้วในแท็บ 2026 · ใส่วัน Ad on → "รอ MA แจ้งแผน"
 function plCreateJob_(user, rowKey, payload, ver) {
   payload = payload || {};
   var r = plMutate_(user, rowKey, ver, plAct_("create", {
     apply: function (job) {
       var ad = plNeedDate_(payload.adOn || job.adOn, "วัน Ad on ");
-      return { changes: { adOn: ad, status: PL_S.WAIT_OPS } };
+      return { changes: { adOn: ad, status: PL_S.WAIT_MA } };
     }
   }));
   if (r.ok) r.suggest = plSuggest_(plJobsCtx_(), r.job);
   return r;
 }
 
-// AE แก้วัน Ad on (ก่อน On air) · หลัง Ops ยืนยันแล้วต้องมีเหตุผล · ถ้าวันติดตั้งเลย Ad on ใหม่ → "รอ AE รับทราบ"
+// AE แก้วัน Ad on (ก่อน On air) · หลังกำหนดการครบแล้วต้องมีเหตุผล · ถ้าวันติดตั้งเลย Ad on ใหม่ → "รอ AE รับทราบ"
 function plUpdateAdOn_(user, rowKey, payload, ver) {
   payload = payload || {};
   return plMutate_(user, rowKey, ver, plAct_("updateAdOn", {
     apply: function (job) {
       var ad = plNeedDate_(payload.adOn, "วัน Ad on ");
       var reason = plStr_(payload.reason);
-      if (job.status !== PL_S.WAIT_OPS && !reason) throw plErr_("NEED_REASON", "งานนี้ Ops ยืนยันแล้ว การแก้วัน Ad on ต้องใส่เหตุผล");
+      var early = job.status === PL_S.WAIT_MA || job.status === PL_S.WAIT_SHIP;
+      if (!early && !reason) throw plErr_("NEED_REASON", "งานนี้มีกำหนดการแล้ว การแก้วัน Ad on ต้องใส่เหตุผล");
       var ch = { adOn: ad };
       if (reason) ch.reason = reason;
       var inst = parseDate_(job.installDate);
@@ -340,33 +344,69 @@ function plUpdateAdOn_(user, rowKey, payload, ver) {
   }));
 }
 
-// Ops ยืนยันกำหนดการ (AH, AI, AJ, AK, AM) · ใช้ทั้งยืนยันครั้งแรกและแก้วันภายหลัง (ต้องมีเหตุผล)
-function plConfirmSchedule_(user, rowKey, payload, ver) {
+function plScheduleWarnings_(job, shipKey, instKey) {
+  if (!shipKey || !instKey) return [];
+  var buf = (plTransportMap_()[job.iata] || {}).buffer;
+  return plEvaluate_({ shipDate: shipKey, installDate: instKey, adOn: job.adOn }, buf != null ? buf : Config.DEFAULT_BUFFER_DAYS).issues;
+}
+
+// MA แจ้งแผนติดตั้ง: จุดส่ง / ผู้รับ / วันติดตั้ง / ทีมติดตั้ง (ติดเอง หรือส่ง Supplier) — ไม่แตะวันส่ง
+//   ครั้งแรก → "รอกำหนดวันส่ง" (Admin เป็นคนใส่วันส่ง) · แก้หลังกำหนดการครบแล้วต้องมีเหตุผล
+//   ถ้าวันติดตั้งใหม่อยู่ก่อนวันส่งเดิม → กลับไป "รอกำหนดวันส่ง" ให้ Admin กำหนดใหม่
+function plPlanInstall_(user, rowKey, payload, ver) {
   payload = payload || {};
-  return plMutate_(user, rowKey, ver, plAct_("confirm", {
+  return plMutate_(user, rowKey, ver, plAct_("plan", {
     apply: function (job) {
       var shipTo = plStr_(payload.shipTo != null ? payload.shipTo : job.shipTo);
       var team = plStr_(payload.team != null ? payload.team : job.team);
-      var ship = plNeedDate_(payload.shipDate, "วันจัดส่ง ");
       var inst = plNeedDate_(payload.installDate, "วันติดตั้ง ");
       var ad = parseDate_(job.adOn);
       var reason = plStr_(payload.reason);
       if (!shipTo) throw plErr_("INVALID", "กรุณาใส่สถานที่จัดส่ง");
       if (!ad) throw plErr_("INVALID", "งานนี้ยังไม่มีวัน Ad on ให้ AE ใส่ก่อน");
       if (team && Config.INSTALL_TEAMS.indexOf(team) < 0) throw plErr_("INVALID", "ทีมติดตั้งต้องเป็น " + Config.INSTALL_TEAMS.join(" / "));
-      if (ship > inst) throw plErr_("INVALID", "วันส่งอยู่หลังวันติดตั้ง ไม่สมเหตุสมผล");
-      var isEdit = job.status !== PL_S.WAIT_OPS;
-      if (isEdit && !reason) throw plErr_("NEED_REASON", "แก้กำหนดการหลังยืนยันแล้ว ต้องใส่เหตุผล");
+      var settled = PL_SETTLED.indexOf(job.status) >= 0;
+      if (settled && !reason) throw plErr_("NEED_REASON", "แก้แผนติดตั้งหลังกำหนดการครบแล้ว ต้องใส่เหตุผล");
       var late = inst > ad;
       if (late && !reason) throw plErr_("NEED_REASON", "วันติดตั้งอยู่หลังวัน Ad on ต้องใส่เหตุผล แล้วระบบจะส่งให้ AE รับทราบ");
-      var ch = { shipTo: shipTo, shipDate: ship, installDate: inst, team: team, confirmedBy: user.email, confirmedAt: plNowText_() };
+      var ch = { shipTo: shipTo, installDate: inst, team: team };
       if (payload.receiver != null) ch.receiver = plStr_(payload.receiver);
       if (reason) ch.reason = reason;
-      if (job.status === PL_S.RESHIP) ch.status = PL_S.RESHIP;           // รอส่งใหม่: เปลี่ยนวันได้ สถานะคงเดิม
-      else ch.status = late ? PL_S.WAIT_AE : PL_S.SCHEDULED;
-      var buf = (plTransportMap_()[job.iata] || {}).buffer;
-      var ev = plEvaluate_({ shipDate: plDateKey_(ship), installDate: plDateKey_(inst), adOn: job.adOn }, buf != null ? buf : Config.DEFAULT_BUFFER_DAYS);
-      return { changes: ch, logNote: reason, warnings: ev.issues };
+      var ship = parseDate_(job.shipDate);
+      var warnings = [];
+      if (!settled) {
+        ch.status = PL_S.WAIT_SHIP;
+      } else if (ship && ship > inst) {
+        ch.status = PL_S.WAIT_SHIP;
+        warnings.push("วันส่งเดิม (" + formatDate_(ship) + ") อยู่หลังวันติดตั้งใหม่ งานกลับไปรอ Admin กำหนดวันส่งใหม่");
+      } else if (job.status === PL_S.RESHIP) {
+        ch.status = PL_S.RESHIP;                                         // รอส่งใหม่: เปลี่ยนแผนได้ สถานะคงเดิม
+      } else {
+        ch.status = late ? PL_S.WAIT_AE : PL_S.SCHEDULED;
+      }
+      if (ch.status !== PL_S.WAIT_SHIP) warnings = warnings.concat(plScheduleWarnings_(job, job.shipDate, plDateKey_(inst)));
+      return { changes: ch, logNote: reason, warnings: warnings };
+    }
+  }));
+}
+
+// Admin กำหนดวันส่ง (หลัง MA แจ้งแผนแล้ว) · ครั้งแรก → "มีกำหนด" (หรือ "รอ AE รับทราบ" ถ้าติดตั้งหลัง Ad on)
+//   แก้วันส่งหลังกำหนดการครบแล้วต้องมีเหตุผล
+function plSetShipDate_(user, rowKey, payload, ver) {
+  payload = payload || {};
+  return plMutate_(user, rowKey, ver, plAct_("shipDate", {
+    apply: function (job) {
+      var ship = plNeedDate_(payload.shipDate, "วันจัดส่ง ");
+      var inst = parseDate_(job.installDate), ad = parseDate_(job.adOn);
+      var reason = plStr_(payload.reason);
+      if (!inst) throw plErr_("INVALID", "งานนี้ยังไม่มีวันติดตั้ง ให้ MA แจ้งแผนติดตั้งก่อน");
+      if (ship > inst) throw plErr_("INVALID", "วันส่งอยู่หลังวันติดตั้ง ไม่สมเหตุสมผล");
+      var first = job.status === PL_S.WAIT_SHIP;
+      if (!first && !reason) throw plErr_("NEED_REASON", "แก้วันส่งหลังกำหนดการครบแล้ว ต้องใส่เหตุผล");
+      var ch = { shipDate: ship, confirmedBy: user.email, confirmedAt: plNowText_() };
+      if (reason) ch.reason = reason;
+      if (first) ch.status = ad && inst > ad ? PL_S.WAIT_AE : PL_S.SCHEDULED;
+      return { changes: ch, logNote: reason, warnings: plScheduleWarnings_(job, plDateKey_(ship), job.installDate) };
     }
   }));
 }
@@ -412,7 +452,7 @@ function plMarkReceived_(user, rowKey, payload, ver) {
   }));
 }
 
-// ติดตั้งแล้ว + รูป · มีรูป ≥ 1 → ติ๊กคอลัมน์ B ให้เอง · Ops กดแทน Installer ได้ (ลง Log ว่ากดแทน)
+// ติดตั้งแล้ว + รูป · มีรูป ≥ 1 → ติ๊กคอลัมน์ B ให้เอง · MA กดได้ทั้งงานที่ติดเองและงานที่ส่ง Supplier ติด · Ops กดแทน Installer ได้ (ลง Log ว่ากดแทน)
 // payload.photoUrls = ลิงก์รูปที่อัปโหลดแล้ว (ฟังก์ชันอัปโหลดรูปเข้า Drive มาในเฟส ค)
 function plMarkInstalled_(user, rowKey, payload, ver) {
   payload = payload || {};
@@ -477,7 +517,7 @@ function plListPosterJobs_(user, filters) {
     var buf = (tmap[job.iata] || {}).buffer;
     job.check = plEvaluate_(job, buf != null ? buf : Config.DEFAULT_BUFFER_DAYS);
     job.createdAt = created[job.row + "|" + job.sign] || "";
-    job.slaOverdue = job.status === PL_S.WAIT_OPS && !!job.createdAt &&
+    job.slaOverdue = job.status === PL_S.WAIT_MA && !!job.createdAt &&
       plDateKey_(plAddWorkdays_(job.createdAt, Config.SLA_WORKDAYS)) < today;
     job.week = plWeekKey_(job.installDate || job.adOn);
     jobs.push(job);
@@ -602,7 +642,8 @@ function getJob(rowKey) { return plCall("", "getJob", [rowKey]); }
 function getShipToOptions(iata) { return plCall("", "getShipToOptions", [iata]); }
 function createJob(rowKey, payload, ver) { return plCall("", "createJob", [rowKey, payload, ver]); }
 function updateAdOn(rowKey, payload, ver) { return plCall("", "updateAdOn", [rowKey, payload, ver]); }
-function confirmSchedule(rowKey, payload, ver) { return plCall("", "confirmSchedule", [rowKey, payload, ver]); }
+function planInstall(rowKey, payload, ver) { return plCall("", "planInstall", [rowKey, payload, ver]); }
+function setShipDate(rowKey, payload, ver) { return plCall("", "setShipDate", [rowKey, payload, ver]); }
 function acknowledgeLate(rowKey, ver) { return plCall("", "acknowledgeLate", [rowKey, ver]); }
 function markShipped(rowKey, payload, ver) { return plCall("", "markShipped", [rowKey, payload, ver]); }
 function markReceived(rowKey, payload, ver) { return plCall("", "markReceived", [rowKey, payload, ver]); }

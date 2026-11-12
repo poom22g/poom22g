@@ -186,11 +186,13 @@
     return a.from.indexOf(job.status || "") >= 0;
   }
   // การกระทำหลักของงานนี้ (ปุ่มบนการ์ด) ตามลำดับความสำคัญ
-  var MAIN_ORDER = ["create", "ackLate", "confirm", "shipped", "received", "installed", "proofSent"];
+  var MAIN_ORDER = ["create", "ackLate", "plan", "shipDate", "shipped", "received", "installed", "proofSent"];
   function mainAction(job) {
     for (var i = 0; i < MAIN_ORDER.length; i++) {
       var k = MAIN_ORDER[i];
-      if (k === "confirm" && job.status !== S().WAIT_OPS) continue;   // สถานะอื่นแก้กำหนดการได้ในแผง แต่ไม่นับเป็นงานค้าง
+      // สถานะอื่นแก้แผน/วันส่งได้ในแผง แต่ไม่นับเป็นงานค้าง
+      if (k === "plan" && job.status !== S().WAIT_MA) continue;
+      if (k === "shipDate" && job.status !== S().WAIT_SHIP) continue;
       if (can(k, job)) return k;
     }
     return "";
@@ -210,7 +212,7 @@
     var s = S(), st = job.status;
     if (!st) return "s-none";
     if (st === s.WAIT_AE || st === s.RESHIP) return "s-red";
-    if (st === s.WAIT_OPS) return "s-wait";
+    if (st === s.WAIT_MA || st === s.WAIT_SHIP) return "s-wait";
     if (st === s.ON_AIR || st === s.CLOSED || st === s.INSTALLED || st === s.INSTALLED_MANUAL) return "s-ok";
     return "s-go";
   }
@@ -222,7 +224,8 @@
   // วันที่ที่ใช้เรียงความเร่งด่วนของการกระทำ
   function dueOf(job, k) {
     if (k === "create" || k === "proofSent" || k === "ackLate") return job.adOn;
-    if (k === "confirm") return job.createdAt ? job.createdAt.slice(0, 10) : job.adOn;
+    if (k === "plan") return job.createdAt ? job.createdAt.slice(0, 10) : job.adOn;
+    if (k === "shipDate") return job.installDate || job.adOn;
     if (k === "shipped") return job.shipDate;
     return job.installDate || job.adOn;
   }
@@ -266,7 +269,7 @@
         job.check = job.check || evaluate(job, curSuggest && curSuggest.buffer);
         job.createdAt = job.createdAt || o.createdAt;
         job.week = job.week || o.week;
-        job.slaOverdue = job.status === S().WAIT_OPS && o.slaOverdue;
+        job.slaOverdue = job.status === S().WAIT_MA && o.slaOverdue;
         D.jobs[i] = job;
         return;
       }
@@ -458,7 +461,7 @@
     ["sla", "ต้องตามงาน", function (j) { return j.slaOverdue; }],
     ["red", "วันไม่สมเหตุสมผล", function (j) { return j.check && j.check.level === "red"; }],
     ["new", "ยังไม่สร้างงาน", function (j) { return !j.status; }],
-    ["WAIT_OPS"], ["WAIT_AE"], ["SCHEDULED"], ["SHIPPED"], ["RESHIP"], ["RECEIVED"], ["INSTALLED"], ["INSTALLED_MANUAL"], ["ON_AIR"], ["CLOSED"]
+    ["WAIT_MA"], ["WAIT_SHIP"], ["WAIT_AE"], ["SCHEDULED"], ["SHIPPED"], ["RESHIP"], ["RECEIVED"], ["INSTALLED"], ["INSTALLED_MANUAL"], ["ON_AIR"], ["CLOSED"]
   ];
   function stageTest(st) {
     if (st[2]) return st[2];
@@ -637,7 +640,7 @@
       kv("สื่อ / วัสดุ", esc([j.media, j.material].filter(String).join(" / "))) +
       kv("Ad on", th(j.adOn)) + kv("วันส่ง", th(j.shipDate)) + kv("วันติดตั้ง", th(j.installDate)) +
       kv("จุดจัดส่ง", esc(j.shipTo)) + kv("ผู้รับ", esc(j.receiver)) + kv("ทีมติดตั้ง", esc(j.team)) +
-      kv("ยืนยันโดย", esc(j.confirmedBy ? j.confirmedBy + " · " + j.confirmedAt : "")) +
+      kv("กำหนดวันส่งโดย", esc(j.confirmedBy ? j.confirmedBy + " · " + j.confirmedAt : "")) +
       kv("ขนส่ง / พัสดุ", esc(j.tracking ? j.tracking + (j.shippedAt ? " · ส่ง " + j.shippedAt : "") : "")) +
       kv("รับของ", esc(j.receivedAt ? j.condition + " · " + j.receivedAt : "")) +
       kv("ติดตั้งจริง", esc(j.installedAt)) + kv("ส่ง Proof", esc(j.proofAt)) +
@@ -662,26 +665,37 @@
     if (can("create", j)) {
       out.push(form("create", "สร้างงาน (AE)",
         field("วัน Ad on", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '" required>', true) +
-        '<div class="plx-sub">ระบบจะแนะนำวันติดตั้ง = Ad on − 1 และวันส่ง = ติดตั้ง − buffer ให้ Ops</div>', "สร้างงาน → ส่งให้ Ops"));
+        '<div class="plx-sub">สร้างแล้วงานจะไปรอ MA แจ้งแผนติดตั้ง จากนั้น Admin กำหนดวันส่ง</div>', "สร้างงาน → ส่งให้ MA"));
     }
     if (can("ackLate", j)) {
       out.push(form("ackLate", "รับทราบ: ติดตั้งหลังวัน Ad on",
-        '<div class="plx-check red">ติดตั้ง ' + th(j.installDate) + " แต่ Ad on " + th(j.adOn) + (j.reason ? "<br>เหตุผลจาก Ops: " + esc(j.reason) : "") + "</div>", "รับทราบ", "warn"));
+        '<div class="plx-check red">ติดตั้ง ' + th(j.installDate) + " แต่ Ad on " + th(j.adOn) + (j.reason ? "<br>เหตุผล: " + esc(j.reason) : "") + "</div>", "รับทราบ", "warn"));
     }
-    if (can("confirm", j)) {
-      var editing = j.status && j.status !== s.WAIT_OPS;
-      var inst = j.installDate || sg.installDate || "", ship = j.shipDate || sg.shipDate || "";
-      out.push(form("confirm", editing ? "แก้กำหนดการ (Ops)" : "ยืนยันกำหนดการ (Ops)",
+    if (can("plan", j)) {
+      var settledP = [s.SCHEDULED, s.WAIT_AE, s.RESHIP].indexOf(j.status) >= 0;
+      var firstP = j.status === s.WAIT_MA;
+      out.push(form("plan", firstP ? "แจ้งแผนติดตั้ง (MA)" : "แก้แผนติดตั้ง (MA)",
         field("จุดจัดส่ง / สถานที่รับงาน", '<input type="text" name="shipTo" value="' + esc(j.shipTo || sg.shipTo || "") + '" list="plx-shipto">' +
           '<datalist id="plx-shipto">' + (sg.shipTo ? '<option value="' + esc(sg.shipTo) + '">' : "") + "</datalist>", true) +
         field("ผู้รับและเบอร์โทร", '<input type="text" name="receiver" value="' + esc(j.receiver || sg.receiver || "") + '">') +
-        '<div class="plx-row2">' + field("วันจัดส่ง", '<input type="date" name="shipDate" value="' + ship + '">', true) +
-        field("วันติดตั้ง", '<input type="date" name="installDate" value="' + inst + '">', true) + "</div>" +
-        field("ทีมติดตั้ง", '<select name="team"><option value="">–</option>' + D.teams.map(function (t) { return '<option' + ((j.team || sg.team) === t ? " selected" : "") + ">" + esc(t) + "</option>"; }).join("") + "</select>") +
+        field("วันติดตั้ง", '<input type="date" name="installDate" value="' + (j.installDate || sg.installDate || "") + '">', true) +
+        field("ทีมติดตั้ง (ติดเอง หรือส่ง Supplier)", '<select name="team"><option value="">–</option>' + D.teams.map(function (t) { return '<option' + ((j.team || sg.team) === t ? " selected" : "") + ">" + esc(t) + "</option>"; }).join("") + "</select>") +
         '<div class="plx-live"></div>' +
-        field("เหตุผล" + (editing ? " (ต้องใส่เมื่อแก้กำหนดการ)" : " (ต้องใส่ถ้าติดตั้งหลัง Ad on)"), '<textarea name="reason"></textarea>') +
-        '<div class="plx-sub">Ad on ' + th(j.adOn) + " · buffer " + (sg.buffer != null ? sg.buffer : "2") + " วัน" + (sg.installDate && !j.installDate ? " · ค่าที่กรอกให้คือค่าแนะนำ" : "") + "</div>",
-        editing ? "บันทึกการแก้ไข" : "ยืนยันกำหนดการ"));
+        field("เหตุผล" + (settledP ? " (ต้องใส่เมื่อแก้แผนหลังกำหนดการครบแล้ว)" : " (ต้องใส่ถ้าติดตั้งหลัง Ad on)"), '<textarea name="reason"></textarea>') +
+        '<div class="plx-sub">Ad on ' + th(j.adOn) + (j.shipDate ? " · วันส่ง " + th(j.shipDate) : " · วันส่ง: Admin เป็นคนกำหนด") + (sg.installDate && !j.installDate ? " · วันติดตั้งที่กรอกให้คือค่าแนะนำ (Ad on − 1)" : "") + "</div>",
+        firstP ? "แจ้งแผน → ส่งให้ Admin กำหนดวันส่ง" : "บันทึกแผนติดตั้ง", "", !firstP));
+    }
+    if (can("shipDate", j)) {
+      var firstS = j.status === s.WAIT_SHIP;
+      var bufS = sg.buffer != null ? sg.buffer : 2;
+      var shipS = j.shipDate || (j.installDate ? addDaysKey(j.installDate, -bufS) : "");
+      out.push(form("shipDate", firstS ? "กำหนดวันส่ง (Admin)" : "แก้วันส่ง (Admin)",
+        '<div class="plx-sub">MA แจ้งแผน: ส่งไป <b>' + esc(j.shipTo || "–") + "</b>" + (j.receiver ? " · ผู้รับ " + esc(j.receiver) : "") + " · ติดตั้ง <b>" + th(j.installDate) + "</b>" + (j.team ? " · ทีม " + esc(j.team) : "") + "</div>" +
+        field("วันจัดส่ง", '<input type="date" name="shipDate" value="' + shipS + '">', true) +
+        '<div class="plx-live"></div>' +
+        (firstS ? "" : field("เหตุผล (ต้องใส่เมื่อแก้วันส่ง)", '<textarea name="reason"></textarea>')) +
+        '<div class="plx-sub">Ad on ' + th(j.adOn) + " · buffer " + bufS + " วัน" + (!j.shipDate && shipS ? " · วันที่กรอกให้คือค่าแนะนำ (ติดตั้ง − buffer)" : "") + "</div>",
+        firstS ? "กำหนดวันส่ง" : "บันทึกวันส่ง", "", !firstS));
     }
     if (can("shipped", j)) {
       out.push(form("shipped", j.status === s.RESHIP ? "ส่งใหม่ (ของเสียหายรอบก่อน)" : "ส่งของแล้ว",
@@ -707,7 +721,7 @@
     if (can("updateAdOn", j)) {
       out.push(form("updateAdOn", "แก้วัน Ad on (AE)",
         field("วัน Ad on ใหม่", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '">', true) +
-        field("เหตุผล" + (j.status !== s.WAIT_OPS ? " (ต้องใส่ เพราะ Ops ยืนยันแล้ว)" : ""), '<textarea name="reason"></textarea>'), "บันทึกวัน Ad on", "", true));
+        field("เหตุผล" + (j.status !== s.WAIT_MA && j.status !== s.WAIT_SHIP ? " (ต้องใส่ เพราะมีกำหนดการแล้ว)" : ""), '<textarea name="reason"></textarea>'), "บันทึกวัน Ad on", "", true));
     }
     if (!out.length) {
       return '<div class="plx-box"><div class="plx-sub">' + (role() ? "ขั้นนี้ไม่ใช่งานของบทบาท " + esc(role()) + " (สถานะ: " + esc(j.status || "ยังไม่สร้างงาน") + ")" : "บัญชีนี้ยังไม่มีบทบาท ดูได้อย่างเดียว") + "</div></div>";
@@ -741,16 +755,19 @@
         drawPending(key);
       });
     });
-    var cf = $('.plx-db form[data-form="confirm"]');
-    if (cf) {
+    // ตรวจวันแบบสด: ฟอร์มแผนติดตั้งเทียบกับวันส่งที่มีอยู่ · ฟอร์มวันส่งเทียบกับวันติดตั้งที่ MA แจ้ง
+    [["plan", "installDate"], ["shipDate", "shipDate"]].forEach(function (p) {
+      var cf = $('.plx-db form[data-form="' + p[0] + '"]');
+      if (!cf) return;
       var upd = function () {
-        var ev = evaluate({ shipDate: cf.shipDate.value, installDate: cf.installDate.value, adOn: j.adOn }, curSuggest && curSuggest.buffer);
-        var live = $(".plx-live", cf);
-        live.innerHTML = cf.shipDate.value && cf.installDate.value ? '<div class="plx-check ' + ev.level + '">' + (ev.level === "green" ? "วันที่สมเหตุสมผล" : esc(ev.issues.join(" · "))) + "</div>" : "";
+        var shipV = p[0] === "shipDate" ? cf.shipDate.value : j.shipDate, instV = p[0] === "plan" ? cf.installDate.value : j.installDate;
+        var ev = evaluate({ shipDate: shipV, installDate: instV, adOn: j.adOn }, curSuggest && curSuggest.buffer);
+        var show = shipV && instV ? true : !!(instV && j.adOn && instV > j.adOn);
+        $(".plx-live", cf).innerHTML = show ? '<div class="plx-check ' + ev.level + '">' + (ev.level === "green" ? "วันที่สมเหตุสมผล" : esc(ev.issues.join(" · "))) + "</div>" : "";
       };
-      ["shipDate", "installDate"].forEach(function (n) { cf[n].addEventListener("input", upd); cf[n].addEventListener("change", upd); });
+      cf[p[1]].addEventListener("input", upd); cf[p[1]].addEventListener("change", upd);
       upd();
-    }
+    });
   }
   function drawPending(key) {
     var box = $('.plx-db [data-prev="' + key + '"]');
@@ -836,9 +853,14 @@
     var payload = {}, err = "";
     if (key === "create") { payload.adOn = f.adOn.value; if (!payload.adOn) err = "กรุณาเลือกวัน Ad on"; }
     if (key === "updateAdOn") { payload.adOn = f.adOn.value; payload.reason = f.reason.value.trim(); if (!payload.adOn) err = "กรุณาเลือกวัน Ad on"; }
-    if (key === "confirm") {
-      ["shipTo", "receiver", "shipDate", "installDate", "team", "reason"].forEach(function (n) { payload[n] = f[n].value.trim(); });
-      if (!payload.shipTo || !payload.shipDate || !payload.installDate) err = "กรุณากรอกจุดจัดส่ง วันจัดส่ง และวันติดตั้ง";
+    if (key === "plan") {
+      ["shipTo", "receiver", "installDate", "team", "reason"].forEach(function (n) { payload[n] = f[n].value.trim(); });
+      if (!payload.shipTo || !payload.installDate) err = "กรุณากรอกจุดจัดส่ง และวันติดตั้ง";
+    }
+    if (key === "shipDate") {
+      payload.shipDate = f.shipDate.value;
+      payload.reason = f.reason ? f.reason.value.trim() : "";
+      if (!payload.shipDate) err = "กรุณาเลือกวันจัดส่ง";
     }
     if (key === "shipped") { payload.tracking = f.tracking.value.trim(); payload.note = f.note.value.trim(); if (!payload.tracking) err = "กรุณาใส่ขนส่ง / เลขพัสดุ"; }
     if (key === "received") {
@@ -865,7 +887,7 @@
       : Promise.resolve();
     chain.then(function () {
       progress("กำลังบันทึก…");
-      var fn = { create: "createJob", updateAdOn: "updateAdOn", confirm: "confirmSchedule", ackLate: "acknowledgeLate", shipped: "markShipped", received: "markReceived", installed: "markInstalled", proofSent: "markProofSent" }[key];
+      var fn = { create: "createJob", updateAdOn: "updateAdOn", plan: "planInstall", shipDate: "setShipDate", ackLate: "acknowledgeLate", shipped: "markShipped", received: "markReceived", installed: "markInstalled", proofSent: "markProofSent" }[key];
       return (key === "ackLate" || key === "proofSent") ? gs(fn, j.rowKey, j.ver) : gs(fn, j.rowKey, payload, j.ver);
     }).then(function (r) { done(r); }, function (e) { done(e && e.code ? e : { ok: false, code: "ERROR", message: (e && e.message) || String(e) }); });
 
@@ -880,7 +902,7 @@
         renderChips(); renderList(); renderDrawer();
         var warn = (r.warnings || []).filter(String);
         showFormMsg(warn.length ? "warn" : "ok", "บันทึกแล้ว ✔" + (warn.length ? "<br>" + esc(warn.join(" · ")) : "") +
-          (key === "create" && r.suggest ? "<br>แนะนำให้ Ops: ส่ง " + th(r.suggest.shipDate) + " · ติดตั้ง " + th(r.suggest.installDate) : ""));
+          (key === "create" && r.suggest ? "<br>ค่าแนะนำ: ติดตั้ง " + th(r.suggest.installDate) + " · ส่ง " + th(r.suggest.shipDate) : ""));
         toast("บันทึกแล้ว: " + D.actions[key].label);
         loadDetail();
         return;

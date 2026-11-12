@@ -215,6 +215,7 @@ function plDailyDigest_(opts) {
   var cidx = plCreationIndex_();
   var box = plMailbox_();
   var ops = plEmailsByRole_(["Ops"]), prod = plEmailsByRole_(["Production"]), inst = plEmailsByRole_(["Installer"]);
+  var ma = plEmailsByRole_(["MA"]), admins = plEmailsByRole_(["Admin"]);
   var notes = [], onAir = [], onAirFail = [];
 
   // 1) ถึงวัน Ad on + ติดตั้งแล้ว → On air (ระบบเปลี่ยนเอง ผ่าน plMutate_ = lock + เทียบ version + Log) แล้วแจ้ง AE ส่ง Proof
@@ -241,31 +242,35 @@ function plDailyDigest_(opts) {
     if (j.shipDate === tomorrow && PL_NOT_SHIPPED.indexOf(j.status) >= 0) {
       box.add(prod.concat(ops), "พรุ่งนี้ต้องส่ง Poster", plJobLine_(j, "ส่งไป " + (j.shipTo || "-")));
     }
-    // 3) D-1 วันติดตั้ง → Installer (จุดรับของไม่มีอีเมลในระบบ จึงยังไม่แจ้ง)
+    // 3) D-1 วันติดตั้ง → MA + Installer (จุดรับของไม่มีอีเมลในระบบ จึงยังไม่แจ้ง)
     if (j.installDate === tomorrow && PL_INSTALLED_SET.indexOf(j.status) < 0) {
-      box.add(inst, "พรุ่งนี้ต้องติดตั้ง", plJobLine_(j, "รับของที่ " + (j.shipTo || "-") + (j.receiver ? " (" + j.receiver + ")" : "")));
+      box.add(ma.concat(inst), "พรุ่งนี้ต้องติดตั้ง", plJobLine_(j, "รับของที่ " + (j.shipTo || "-") + (j.receiver ? " (" + j.receiver + ")" : "")));
     }
-    // 4) เลยกำหนดแล้วยังไม่กด → Ops
+    // 4) เลยกำหนดแล้วยังไม่กด → เรื่องส่ง: Ops · เรื่องรับของ/ติดตั้ง: Ops + MA
     if (j.shipDate && j.shipDate < today && PL_NOT_SHIPPED.indexOf(j.status) >= 0) {
       box.add(ops, "เลยวันส่งแล้วยังไม่กด \"ส่งแล้ว\"", plJobLine_(j));
     } else if (j.status === PL_S.SHIPPED && j.installDate && j.installDate < today) {
-      box.add(ops, "เลยวันติดตั้งแล้วยังไม่กด \"ได้รับของแล้ว\"", plJobLine_(j));
+      box.add(ops.concat(ma), "เลยวันติดตั้งแล้วยังไม่กด \"ได้รับของแล้ว\"", plJobLine_(j));
     } else if (j.status === PL_S.RECEIVED && j.installDate && j.installDate < today) {
-      box.add(ops, "เลยวันติดตั้งแล้วยังไม่กด \"ติดตั้งแล้ว\"", plJobLine_(j));
+      box.add(ops.concat(ma), "เลยวันติดตั้งแล้วยังไม่กด \"ติดตั้งแล้ว\"", plJobLine_(j));
+    }
+    // 4.1) MA แจ้งแผนแล้ว ยังไม่มีวันส่ง → Admin (แจ้งทุกวันจนกว่าจะกำหนด)
+    if (j.status === PL_S.WAIT_SHIP) {
+      box.add(admins, "รอกำหนดวันส่ง (MA แจ้งแผนติดตั้งแล้ว)", plJobLine_(j, "ส่งไป " + (j.shipTo || "-")));
     }
   });
 
-  // 5) Ops ไม่ยืนยันภายใน SLA → หัวหน้า Ops (ไม่ได้ตั้ง OPS_HEAD_EMAIL → ส่ง Ops + Admin แทน)
+  // 5) MA ไม่แจ้งแผนภายใน SLA → หัวหน้า (ไม่ได้ตั้ง OPS_HEAD_EMAIL → ส่ง MA + Admin แทน)
   var head = Config.prop("OPS_HEAD_EMAIL");
-  var slaTo = head ? head.split(/[,\s]+/) : ops.concat(plEmailsByRole_(["Admin"]));
-  if (!head) notes.push("ยังไม่ได้ตั้ง OPS_HEAD_EMAIL จึงส่งเรื่องเกิน SLA ให้ Ops + Admin แทน");
+  var slaTo = head ? head.split(/[,\s]+/) : ma.concat(admins);
+  if (!head) notes.push("ยังไม่ได้ตั้ง OPS_HEAD_EMAIL จึงส่งเรื่องเกิน SLA ให้ MA + Admin แทน");
   var noCreated = [];
   jobs.forEach(function (j) {
-    if (j.status !== PL_S.WAIT_OPS) return;
+    if (j.status !== PL_S.WAIT_MA) return;
     var c = plCreationOf_(cidx, j, jobKeys);
     if (!c || !c.at) { noCreated.push(j.sign); return; }
     var due = plDateKey_(plAddWorkdays_(c.at, Config.SLA_WORKDAYS));
-    if (due < today) box.add(slaTo, "Ops ยังไม่ยืนยันเกิน " + Config.SLA_WORKDAYS + " วันทำการ", plJobLine_(j, "สร้างงานเมื่อ " + c.at.slice(0, 16) + " ครบกำหนด " + plShortDate_(due)));
+    if (due < today) box.add(slaTo, "MA ยังไม่แจ้งแผนติดตั้งเกิน " + Config.SLA_WORKDAYS + " วันทำการ", plJobLine_(j, "สร้างงานเมื่อ " + c.at.slice(0, 16) + " ครบกำหนด " + plShortDate_(due)));
   });
   if (noCreated.length) notes.push("หาเวลาสร้างงานใน Log ไม่พบ จึงคิด SLA ไม่ได้: " + noCreated.join(", "));
 
@@ -399,10 +404,10 @@ function plHourlyNotify_(opts) {
     active.forEach(function (j) { jobs[j.row + "|" + j.sign] = j; (bySign[j.sign] = bySign[j.sign] || []).push(j); });
     var jobKeys = plJobKeys_(active);
     var cidx = plCreationIndex_();
-    var ops = plEmailsByRole_(["Ops"]);
+    var ma = plEmailsByRole_(["MA"]), admins = plEmailsByRole_(["Admin"]), prod = plEmailsByRole_(["Production"]);
     var stCol = PL_F.status;
     events.forEach(function (ev) {
-      // งานปัจจุบันของเหตุการณ์นี้: แถวตรง → ใช้เลย · แถวเลื่อน → ป้ายเดียวกันที่มีงานเดียว · ไม่พบ → ไม่รู้สถานะตอนนี้
+      // งานปัจจุบันของเหตุการณ์นี้: แถวตรง → ใช้เลย · แถวเลื่อน → ป้ายเดียวกันที่มีงานเดียว · ไม่พบ → ไม่รู้สถานะปัจจุบัน
       var j = jobs[ev.row + "|" + ev.sign] || ((bySign[ev.sign] || []).length === 1 ? bySign[ev.sign][0] : null);
       var shown = j || { row: ev.row, sign: ev.sign, status: "(ไม่พบแถวแล้ว)" };
       var sc = ev.ch[stCol];
@@ -412,18 +417,26 @@ function plHourlyNotify_(opts) {
       function add(emails, section, line) {
         box.add((emails || []).filter(function (em) { return !(got[em] >= ev.logRow); }), section, line);
       }
-      // "งานใหม่" / "แถวแดง" แจ้งเฉพาะเมื่อตอนนี้งานยังค้างอยู่ที่สถานะนั้น (มีคนจัดการไปแล้วในชั่วโมงเดียวกัน ไม่ต้องแจ้ง)
-      if (sc && sc.n === PL_S.WAIT_OPS && !sc.o && j && j.status === PL_S.WAIT_OPS) {
-        add(ops, "งานใหม่เข้าคิว รอ Ops ยืนยันกำหนดการ", plJobLine_(j, "AE " + who));
+      var isPlan = ev.action.indexOf(PL_ACTIONS.plan.label) === 0, isShip = ev.action.indexOf(PL_ACTIONS.shipDate.label) === 0;
+      // "งานใหม่" / "รอวันส่ง" / "แถวแดง" แจ้งเฉพาะเมื่อตอนนี้งานยังค้างอยู่ที่สถานะนั้น (มีคนจัดการไปแล้วในชั่วโมงเดียวกัน ไม่ต้องแจ้ง)
+      if (sc && sc.n === PL_S.WAIT_MA && !sc.o && j && j.status === PL_S.WAIT_MA) {
+        add(ma, "งานใหม่เข้าคิว รอ MA แจ้งแผนติดตั้ง", plJobLine_(j, "AE " + who));
       }
-      if (sc && sc.n === PL_S.WAIT_AE) {
+      if (sc && sc.n === PL_S.WAIT_SHIP) {
+        if (j && j.status === PL_S.WAIT_SHIP) {
+          add(admins, "MA แจ้งแผนติดตั้งแล้ว รอกำหนดวันส่ง", plJobLine_(j, "ส่งไป " + (j.shipTo || "-") + " · โดย " + who));
+        }
+      } else if (sc && sc.n === PL_S.WAIT_AE) {
         if (j && j.status === PL_S.WAIT_AE) {
           add(plAeFor_(cidx, j, jobKeys), "แถวแดง: ติดตั้งหลัง Ad on รอ AE กดรับทราบ", plJobLine_(j, "เหตุผล: " + (note || j.reason || "-") + " · โดย " + who));
         }
-      } else if (ev.action.indexOf(PL_ACTIONS.confirm.label) === 0) {
-        var edited = (sc && sc.o && sc.o !== PL_S.WAIT_OPS) || !sc;
-        add(plAeFor_(cidx, shown, jobKeys), edited ? "Ops แก้กำหนดการหลังยืนยันแล้ว" : "Ops ยืนยันกำหนดการแล้ว",
-          plJobLine_(shown, (edited && note ? "เหตุผล: " + note + " · " : "") + "โดย " + who));
+      } else if (isShip && sc && sc.o === PL_S.WAIT_SHIP) {
+        // กำหนดการครบครั้งแรก → AE คนสร้าง + MA + Production (คนส่งของ)
+        add(plAeFor_(cidx, shown, jobKeys).concat(ma, prod), "กำหนดการครบแล้ว (มีวันส่งและวันติดตั้ง)", plJobLine_(shown, "โดย " + who));
+      } else if ((isPlan || isShip) && !(j && (j.status === PL_S.WAIT_MA || j.status === PL_S.WAIT_SHIP))) {
+        // แก้แผน/วันส่งหลังกำหนดการครบแล้ว → AE คนสร้าง + อีกฝั่ง (MA แก้ → Admin รู้ · Admin แก้ → MA รู้) + Production
+        add(plAeFor_(cidx, shown, jobKeys).concat(isPlan ? admins : ma, prod), "แก้กำหนดการหลังกำหนดการครบแล้ว",
+          plJobLine_(shown, (isPlan ? "แก้แผนติดตั้ง" : "แก้วันส่ง") + (note ? " · เหตุผล: " + note : "") + " · โดย " + who));
       }
     });
   }

@@ -23,6 +23,7 @@ function plTestPhaseB() {
   var AE = { email: "ae@test", name: "AE", role: "AE" }, OPS = { email: "ops@test", name: "Ops", role: "Ops" };
   var PROD = { email: "prod@test", name: "Prod", role: "Production" }, MA = { email: "ma@test", name: "MA", role: "MA" };
   var INS = { email: "ins@test", name: "Ins", role: "Installer" }, NOBODY = { email: "x@test", name: "", role: "" };
+  var ADMIN = { email: "admin@test", name: "Admin", role: "Admin" };
 
   try {
     var ctx = plJobsCtx_();
@@ -53,7 +54,7 @@ function plTestPhaseB() {
     r = call(plCreateJob_, AE, key, { adOn: "31-Feb-2026" }, "");
     check("วัน Ad on ผิด → INVALID", code(r) === "INVALID", r);
     r = call(plCreateJob_, AE, key, { adOn: "20-Nov-2026" }, "");
-    check("AE สร้างงาน → รอ Ops รับงาน", r.ok && r.job.status === Config.STATUS.WAIT_OPS && r.job.adOn === "2026-11-20", r);
+    check("AE สร้างงาน → รอ MA แจ้งแผน", r.ok && r.job.status === Config.STATUS.WAIT_MA && r.job.adOn === "2026-11-20", r);
     check("แนะนำวันติดตั้ง = Ad on − 1", r.ok && r.suggest.installDate === "2026-11-19", r.suggest);
     check("แนะนำวันส่ง = ติดตั้ง − buffer", r.ok && r.suggest.shipDate === plDateKey_(plAddDays_("2026-11-19", -r.suggest.buffer)), r.suggest);
     check("เขียนแก้ล่าสุดโดย/เมื่อ", r.ok && r.job.updatedBy === "ae@test" && !!r.job.ver, r.job);
@@ -62,17 +63,37 @@ function plTestPhaseB() {
     r = call(plCreateJob_, AE, key, { adOn: "2026-11-20" }, ver);
     check("สร้างซ้ำ → BAD_STATE", code(r) === "BAD_STATE", r);
 
-    // --- ยืนยันกำหนดการ ---
-    r = call(plConfirmSchedule_, OPS, key, { shipTo: "สนามบิน", shipDate: "2026-11-17", installDate: "2026-11-19", team: "Operation" }, "");
-    check("ver เก่า → CONFLICT (ไม่เขียนทับเงียบ)", code(r) === "CONFLICT" && r.job && r.job.status === Config.STATUS.WAIT_OPS, r);
-    r = call(plConfirmSchedule_, AE, key, { shipTo: "สนามบิน", shipDate: "2026-11-17", installDate: "2026-11-19" }, ver);
-    check("AE ยืนยันกำหนดการไม่ได้", code(r) === "FORBIDDEN", r);
-    r = call(plConfirmSchedule_, OPS, key, { shipTo: "สนามบิน", shipDate: "2026-11-19", installDate: "2026-11-17", team: "Operation" }, ver);
-    check("วันส่งหลังวันติดตั้ง → INVALID", code(r) === "INVALID", r);
-    r = call(plConfirmSchedule_, OPS, key, { shipTo: "สนามบิน", shipDate: "2026-11-19", installDate: "2026-11-21", team: "Operation" }, ver);
+    // --- MA แจ้งแผนติดตั้ง (จุดส่ง / วันติดตั้ง / ทีม) ---
+    var P = { shipTo: "สนามบิน", installDate: "2026-11-19", team: "Operation" };
+    r = call(plPlanInstall_, MA, key, P, "");
+    check("ver เก่า → CONFLICT (ไม่เขียนทับเงียบ)", code(r) === "CONFLICT" && r.job && r.job.status === Config.STATUS.WAIT_MA, r);
+    r = call(plPlanInstall_, AE, key, P, ver);
+    check("AE แจ้งแผนติดตั้งไม่ได้", code(r) === "FORBIDDEN", r);
+    r = call(plPlanInstall_, OPS, key, P, ver);
+    check("Ops แจ้งแผนติดตั้งไม่ได้", code(r) === "FORBIDDEN", r);
+    r = call(plSetShipDate_, ADMIN, key, { shipDate: "2026-11-17" }, ver);
+    check("MA ยังไม่แจ้งแผน → Admin กำหนดวันส่งไม่ได้ (BAD_STATE)", code(r) === "BAD_STATE", r);
+    r = call(plPlanInstall_, MA, key, { shipTo: "", installDate: "2026-11-19" }, ver);
+    check("ไม่ใส่จุดจัดส่ง → INVALID", code(r) === "INVALID", r);
+    r = call(plPlanInstall_, MA, key, { shipTo: "สนามบิน", installDate: "2026-11-19", team: "ทีมที่ไม่มี" }, ver);
+    check("ทีมติดตั้งนอกรายการ → INVALID", code(r) === "INVALID", r);
+    r = call(plPlanInstall_, MA, key, { shipTo: "สนามบิน", installDate: "2026-11-21", team: "Supplier" }, ver);
     check("ติดตั้งหลัง Ad on ไม่มีเหตุผล → NEED_REASON", code(r) === "NEED_REASON", r);
-    r = call(plConfirmSchedule_, OPS, key, { shipTo: "สนามบิน", shipDate: "2026-11-19", installDate: "2026-11-21", team: "Operation", reason: "ทดสอบ: ทีมไม่ว่าง" }, ver);
-    check("ติดตั้งหลัง Ad on + เหตุผล → รอ AE รับทราบ", r.ok && r.job.status === Config.STATUS.WAIT_AE && r.job.confirmedBy === "ops@test", r);
+    var shipBefore = job0.shipDate;
+    r = call(plPlanInstall_, MA, key, { shipTo: "สนามบิน", installDate: "2026-11-21", team: "Supplier", reason: "ทดสอบ: ทีมไม่ว่าง" }, ver);
+    check("MA แจ้งแผน (ส่ง Supplier ติด) → รอกำหนดวันส่ง", r.ok && r.job.status === Config.STATUS.WAIT_SHIP && r.job.team === "Supplier" && r.job.installDate === "2026-11-21", r);
+    check("MA แจ้งแผน ไม่แตะวันส่ง และยังไม่ลงชื่อคนกำหนดวันส่ง", r.ok && r.job.shipDate === shipBefore && !r.job.confirmedBy, r.ok && [r.job.shipDate, r.job.confirmedBy]);
+    ver = r.ok ? r.job.ver : ver;
+
+    // --- Admin กำหนดวันส่ง ---
+    r = call(plSetShipDate_, MA, key, { shipDate: "2026-11-19" }, ver);
+    check("MA กำหนดวันส่งไม่ได้", code(r) === "FORBIDDEN", r);
+    r = call(plSetShipDate_, OPS, key, { shipDate: "2026-11-19" }, ver);
+    check("Ops กำหนดวันส่งไม่ได้", code(r) === "FORBIDDEN", r);
+    r = call(plSetShipDate_, ADMIN, key, { shipDate: "2026-11-22" }, ver);
+    check("วันส่งหลังวันติดตั้ง → INVALID", code(r) === "INVALID", r);
+    r = call(plSetShipDate_, ADMIN, key, { shipDate: "2026-11-19" }, ver);
+    check("Admin กำหนดวันส่ง (ติดตั้งหลัง Ad on) → รอ AE รับทราบ", r.ok && r.job.status === Config.STATUS.WAIT_AE && r.job.shipDate === "2026-11-19" && r.job.confirmedBy === "admin@test", r);
     ver = r.ok ? r.job.ver : ver;
     r = call(plMarkShipped_, OPS, key, { tracking: "X1" }, ver);
     check("ยังไม่รับทราบ ส่งของไม่ได้ (BAD_STATE)", code(r) === "BAD_STATE", r);
@@ -81,12 +102,26 @@ function plTestPhaseB() {
     r = call(plAcknowledgeLate_, AE, key, ver);
     check("AE รับทราบ → มีกำหนด", r.ok && r.job.status === Config.STATUS.SCHEDULED, r);
     ver = r.ok ? r.job.ver : ver;
-    r = call(plConfirmSchedule_, OPS, key, { shipTo: "สนามบิน", shipDate: "2026-11-17", installDate: "2026-11-19", team: "Operation" }, ver);
-    check("แก้กำหนดการโดยไม่มีเหตุผล → NEED_REASON", code(r) === "NEED_REASON", r);
-    r = call(plConfirmSchedule_, OPS, key, { shipTo: "สนามบิน", shipDate: "2026-11-18", installDate: "2026-11-19", team: "Operation", reason: "ทดสอบ: ทีมว่างแล้ว" }, ver);
-    check("แก้กำหนดการ + เหตุผล → มีกำหนด", r.ok && r.job.status === Config.STATUS.SCHEDULED && r.job.installDate === "2026-11-19", r);
+
+    // --- แก้หลังกำหนดการครบแล้ว ---
+    r = call(plPlanInstall_, MA, key, P, ver);
+    check("แก้แผนติดตั้งโดยไม่มีเหตุผล → NEED_REASON", code(r) === "NEED_REASON", r);
+    r = call(plSetShipDate_, ADMIN, key, { shipDate: "2026-11-18" }, ver);
+    check("แก้วันส่งโดยไม่มีเหตุผล → NEED_REASON", code(r) === "NEED_REASON", r);
+    r = call(plPlanInstall_, MA, key, { shipTo: "สนามบิน", installDate: "2026-11-18", team: "Operation", reason: "ทดสอบ: ทีมว่างแล้ว" }, ver);
+    check("วันติดตั้งใหม่อยู่ก่อนวันส่งเดิม → กลับไปรอกำหนดวันส่ง + คำเตือน", r.ok && r.job.status === Config.STATUS.WAIT_SHIP && r.warnings.length > 0 && r.job.team === "Operation", r);
+    ver = r.ok ? r.job.ver : ver;
+    r = call(plSetShipDate_, ADMIN, key, { shipDate: "2026-11-17" }, ver);
+    check("Admin กำหนดวันส่งใหม่ → มีกำหนด", r.ok && r.job.status === Config.STATUS.SCHEDULED && r.job.shipDate === "2026-11-17" && r.job.installDate === "2026-11-18", r);
     check("ส่ง→ติดตั้ง 1 วัน < buffer → มีคำเตือน", r.ok && r.warnings.length > 0, r.warnings);
     ver = r.ok ? r.job.ver : ver;
+    r = call(plSetShipDate_, ADMIN, key, { shipDate: "2026-11-16", reason: "ทดสอบ: ส่งเร็วขึ้น" }, ver);
+    check("Admin แก้วันส่ง + เหตุผล → มีกำหนด", r.ok && r.job.status === Config.STATUS.SCHEDULED && r.job.shipDate === "2026-11-16", r);
+    ver = r.ok ? r.job.ver : ver;
+    r = call(plPlanInstall_, MA, key, { shipTo: "สนามบิน", installDate: "2026-11-19", team: "Operation", reason: "ทดสอบ: เลื่อนติดตั้ง" }, ver);
+    check("MA แก้แผน + เหตุผล (วันส่งยังใช้ได้) → มีกำหนด", r.ok && r.job.status === Config.STATUS.SCHEDULED && r.job.installDate === "2026-11-19" && r.job.shipDate === "2026-11-16", r);
+    ver = r.ok ? r.job.ver : ver;
+    check("MA มีสิทธิ์กด \"ติดตั้งแล้ว\" (ติดเองหรือส่ง Supplier ติด)", PL_ACTIONS.installed.roles.indexOf("MA") >= 0, PL_ACTIONS.installed.roles);
 
     // --- ส่งของ / รับของ ---
     r = call(plMarkShipped_, INS, key, { tracking: "X1" }, ver);
@@ -258,7 +293,7 @@ function plTestUpload() {
  * ทดสอบเฟส ง บนสำเนา — ต้องเปิด plUiTestOn ก่อน (อีเมลจะถูกส่งไปที่เจ้าของสคริปต์แทน และหัวเรื่องมี [TEST])
  * ใช้ผู้ใช้จำลอง (ใส่ใน cache ชั่วคราว ไม่แก้แท็บ Users) แล้วล้าง cache คืนตอนจบ
  *  - plTestPhaseD()       : onEdit คอลัมน์ B (จำลอง event) — ไม่ส่งอีเมล
- *  - plTestPhaseDNotify() : สรุป 08:00 + รายชั่วโมง + trigger — ส่งอีเมลจริง 3 ฉบับ (ส่งแทนมาที่เจ้าของสคริปต์)
+ *  - plTestPhaseDNotify() : สรุป 08:00 + รายชั่วโมง + trigger — ส่งอีเมลจริงราว 5 ฉบับ (ส่งแทนมาที่เจ้าของสคริปต์)
  * ------------------------------------------------------------------- */
 function plTestDEnv_(need) {
   var p = PropertiesService.getScriptProperties();
@@ -271,8 +306,10 @@ function plTestDEnv_(need) {
   T.AE = { email: "ae@test", name: "AE", role: "AE" };
   T.OPS = { email: "ops@test", name: "Ops", role: "Ops" };
   T.INS = { email: "ins@test", name: "Ins", role: "Installer" };
+  T.MA = { email: "ma@test", name: "MA", role: "MA" };
+  T.ADMIN = { email: "admin@test", name: "Admin", role: "Admin" };
   var fakeUsers = { "ae@test": { name: "AE", role: "AE" }, "ops@test": { name: "Ops", role: "Ops" }, "prod@test": { name: "Prod", role: "Production" },
-    "ins@test": { name: "Ins", role: "Installer" }, "admin@test": { name: "Admin", role: "Admin" } };
+    "ins@test": { name: "Ins", role: "Installer" }, "ma@test": { name: "MA", role: "MA" }, "admin@test": { name: "Admin", role: "Admin" } };
   CacheService.getScriptCache().put("pl_users_v1", JSON.stringify(fakeUsers), 900);
   T.ss = SpreadsheetApp.openById(PL_TEST_SPREADSHEET_DEFAULT);
   var ctx = T.ctx = plJobsCtx_(), sh = T.sh = ctx.sheet;
@@ -451,9 +488,9 @@ function plTestPhaseD() {
 
 function plTestPhaseDNotify() {
   plRequireAdminCaller_();
-  var T = plTestDEnv_(4);
+  var T = plTestDEnv_(5);
   var out = T.out, check = T.check, call = T.call, S = T.S, ctx = T.ctx, sh = T.sh, colB = T.colB, job = T.job, logHas = T.logHas, has = T.has, p = T.p;
-  var AE = T.AE, OPS = T.OPS, INS = T.INS;
+  var AE = T.AE, OPS = T.OPS, INS = T.INS, MA = T.MA, ADMIN = T.ADMIN;
   var hourlyKey = plHourlyKey_(), digestKey = plDigestKey_();
   var savedHourly = p.getProperty(hourlyKey), savedDigest = p.getProperty(digestKey);
   var origEffective = plEffectiveEmail_;
@@ -480,7 +517,8 @@ function plTestPhaseDNotify() {
     var X = "2026-11-25";
     var RO = T.free[0], kO = job(RO).rowKey;
     var o = call(plCreateJob_, AE, kO, { adOn: X }, "");
-    if (o.ok) o = call(plConfirmSchedule_, OPS, kO, { shipTo: "TEST จุดรับ", shipDate: "2026-11-20", installDate: "2026-11-23" }, o.job.ver);
+    if (o.ok) o = call(plPlanInstall_, MA, kO, { shipTo: "TEST จุดรับ", installDate: "2026-11-23" }, o.job.ver);
+    if (o.ok) o = call(plSetShipDate_, ADMIN, kO, { shipDate: "2026-11-20" }, o.job.ver);
     if (o.ok) o = call(plMarkShipped_, OPS, kO, { tracking: "TEST-123" }, o.job.ver);
     if (o.ok) o = call(plMarkReceived_, OPS, kO, { condition: Config.CONDITIONS.filter(function (c) { return c !== "เสียหาย"; })[0] }, o.job.ver);
     if (o.ok) o = call(plMarkInstalled_, INS, kO, {}, o.job.ver);
@@ -513,35 +551,42 @@ function plTestPhaseDNotify() {
 
     // ===== สร้างงานทดสอบ แล้วตรวจ D-1 / เลยกำหนด / SLA / รายชั่วโมง =====
     var L = plSheet_(Config.SHEET_LOG), logFrom = L.getLastRow() + 1;
-    var kA = job(T.free[1]).rowKey, kB = job(T.free[2]).rowKey, kC = job(T.free[3]).rowKey;
+    var kA = job(T.free[1]).rowKey, kB = job(T.free[2]).rowKey, kC = job(T.free[3]).rowKey, kD = job(T.free[4]).rowKey;
     var a = call(plCreateJob_, AE, kA, { adOn: "2026-11-20" }, "");
-    var c = a.ok ? call(plConfirmSchedule_, OPS, kA, { shipTo: "TEST จุดรับ", shipDate: "2026-11-16", installDate: "2026-11-18" }, a.job.ver) : a;
-    check("สร้าง+ยืนยันงานทดสอบ A", c.ok && c.job.status === S.SCHEDULED, c);
+    var c = a.ok ? call(plPlanInstall_, MA, kA, { shipTo: "TEST จุดรับ", installDate: "2026-11-18" }, a.job.ver) : a;
+    check("งาน A: MA แจ้งแผน → รอกำหนดวันส่ง", c.ok && c.job.status === S.WAIT_SHIP, c);
+    if (c.ok) c = call(plSetShipDate_, ADMIN, kA, { shipDate: "2026-11-16" }, c.job.ver);
+    check("งาน A: Admin กำหนดวันส่ง → มีกำหนด", c.ok && c.job.status === S.SCHEDULED, c);
     var b = call(plCreateJob_, AE, kB, { adOn: "2026-11-17" }, "");
-    var b2 = b.ok ? call(plConfirmSchedule_, OPS, kB, { shipTo: "TEST จุดรับ", shipDate: "2026-11-16", installDate: "2026-11-19", reason: "TEST ติดตั้งช้า" }, b.job.ver) : b;
+    var b2 = b.ok ? call(plPlanInstall_, MA, kB, { shipTo: "TEST จุดรับ", installDate: "2026-11-19", reason: "TEST ติดตั้งช้า" }, b.job.ver) : b;
+    if (b2.ok) b2 = call(plSetShipDate_, ADMIN, kB, { shipDate: "2026-11-16" }, b2.job.ver);
     check("งานทดสอบ B แถวแดง → รอ AE", b2.ok && b2.job.status === S.WAIT_AE, b2);
-    var c2 = c.ok ? call(plConfirmSchedule_, OPS, kA, { shipTo: "TEST จุดรับ", shipDate: "2026-11-16", installDate: "2026-11-18", reason: "TEST แก้วัน" }, c.job.ver) : c;
-    check("Ops แก้วันงาน A หลังยืนยัน", c2.ok, c2);
+    var c2 = c.ok ? call(plPlanInstall_, MA, kA, { shipTo: "TEST จุดรับ 2", installDate: "2026-11-18", reason: "TEST แก้แผน" }, c.job.ver) : c;
+    check("MA แก้แผนงาน A หลังกำหนดการครบ", c2.ok && c2.job.status === S.SCHEDULED, c2);
     var cc = call(plCreateJob_, AE, kC, { adOn: "2026-11-30" }, "");
-    check("สร้างงาน C (ทิ้งไว้ที่ รอ Ops)", cc.ok, cc);
+    check("สร้างงาน C (ทิ้งไว้ที่ รอ MA)", cc.ok && cc.job.status === S.WAIT_MA, cc);
+    var dd = call(plCreateJob_, AE, kD, { adOn: "2026-11-28" }, "");
+    if (dd.ok) dd = call(plPlanInstall_, MA, kD, { shipTo: "TEST จุดรับ", installDate: "2026-11-26" }, dd.job.ver);
+    check("สร้างงาน D + MA แจ้งแผน (ทิ้งไว้ที่ รอกำหนดวันส่ง)", dd.ok && dd.job.status === S.WAIT_SHIP, dd);
 
     var d15 = plDailyDigest_({ dryRun: true, today: "2026-11-15" });
     check("D-1 วันส่ง → Production + Ops", has(d15.plan, "prod@test", "พรุ่งนี้ต้องส่ง") && has(d15.plan, "ops@test", "พรุ่งนี้ต้องส่ง"), d15.plan);
     check("D-1 วันส่ง ไม่ส่งให้ Installer", !has(d15.plan, "ins@test", "พรุ่งนี้ต้องส่ง"), d15.plan);
     var d17 = plDailyDigest_({ dryRun: true, today: "2026-11-17" });
-    check("D-1 วันติดตั้ง → Installer", has(d17.plan, "ins@test", "พรุ่งนี้ต้องติดตั้ง"), d17.plan);
+    check("D-1 วันติดตั้ง → MA + Installer", has(d17.plan, "ins@test", "พรุ่งนี้ต้องติดตั้ง") && has(d17.plan, "ma@test", "พรุ่งนี้ต้องติดตั้ง"), d17.plan);
+    check("รอกำหนดวันส่ง → Admin (งาน D)", has(d17.plan, "admin@test", "รอกำหนดวันส่ง") && !has(d17.plan, "ops@test", "รอกำหนดวันส่ง"), d17.plan);
     check("เลยวันส่ง → Ops", has(d17.plan, "ops@test", "เลยวันส่งแล้ว"), d17.plan);
     check("อีเมลรวมฉบับเดียวต่อคน", d17.mail.recipients.filter(function (e) { return e === "ops@test"; }).length === 1, d17.mail);
     out.push("INFO แผน 17 พ.ย.: " + JSON.stringify(d17.plan));
 
     var due = plDateKey_(plAddWorkdays_(new Date(), Config.SLA_WORKDAYS));
     var head = Config.prop("OPS_HEAD_EMAIL");
-    var slaTo = head ? head.split(/[,\s]+/)[0].toLowerCase() : "ops@test";
+    var slaTo = head ? head.split(/[,\s]+/)[0].toLowerCase() : "ma@test";
     var dS0 = plDailyDigest_({ dryRun: true, today: due });
     var dS = plDailyDigest_({ dryRun: true, today: plDateKey_(plAddDays_(due, 1)) });
     function slaHas(res, em) {
       var bx = res.detail[em]; if (!bx) return false;
-      return Object.keys(bx.sections).some(function (s) { return s.indexOf("Ops ยังไม่ยืนยันเกิน") >= 0 && bx.sections[s].some(function (l) { return l.indexOf(kC.signCode) >= 0; }); });
+      return Object.keys(bx.sections).some(function (s) { return s.indexOf("MA ยังไม่แจ้งแผนติดตั้งเกิน") >= 0 && bx.sections[s].some(function (l) { return l.indexOf(kC.signCode) >= 0; }); });
     }
     check("วันครบกำหนด SLA → ยังไม่แจ้งงาน C", !slaHas(dS0, slaTo), dS0.plan);
     check("เลย SLA → แจ้งงาน C ถึง " + slaTo, slaHas(dS, slaTo), dS.plan);
@@ -558,11 +603,12 @@ function plTestPhaseDNotify() {
 
     var h = plHourlyNotify_({ dryRun: true, fromRow: logFrom });
     out.push("INFO รายชั่วโมง: " + JSON.stringify(h.plan));
-    check("รายชั่วโมง: งานใหม่ → Ops", has(h.plan, "ops@test", "งานใหม่เข้าคิว"), h.plan);
-    check("รายชั่วโมง: งานที่ Ops รับไปแล้วในชั่วโมงเดียวกัน ไม่ขึ้นเป็นงานใหม่", (h.plan["ops@test"] || {})["งานใหม่เข้าคิว รอ Ops ยืนยันกำหนดการ"] === 1, h.plan);
-    check("รายชั่วโมง: Ops ยืนยัน → AE คนสร้าง", has(h.plan, "ae@test", "Ops ยืนยันกำหนดการแล้ว"), h.plan);
+    check("รายชั่วโมง: งานใหม่ → MA", has(h.plan, "ma@test", "งานใหม่เข้าคิว"), h.plan);
+    check("รายชั่วโมง: งานที่ MA แจ้งแผนไปแล้วในชั่วโมงเดียวกัน ไม่ขึ้นเป็นงานใหม่", (h.plan["ma@test"] || {})["งานใหม่เข้าคิว รอ MA แจ้งแผนติดตั้ง"] === 1, h.plan);
+    check("รายชั่วโมง: MA แจ้งแผน → Admin (เฉพาะงานที่ยังรอวันส่ง)", (h.plan["admin@test"] || {})["MA แจ้งแผนติดตั้งแล้ว รอกำหนดวันส่ง"] === 1, h.plan);
+    check("รายชั่วโมง: กำหนดการครบ → AE คนสร้าง + MA + Production", has(h.plan, "ae@test", "กำหนดการครบแล้ว") && has(h.plan, "ma@test", "กำหนดการครบแล้ว") && has(h.plan, "prod@test", "กำหนดการครบแล้ว"), h.plan);
     check("รายชั่วโมง: แถวแดง → AE", has(h.plan, "ae@test", "แถวแดง"), h.plan);
-    check("รายชั่วโมง: แก้วันหลังยืนยัน → AE", has(h.plan, "ae@test", "Ops แก้กำหนดการหลังยืนยันแล้ว"), h.plan);
+    check("รายชั่วโมง: MA แก้แผนหลังกำหนดการครบ → AE + Admin", has(h.plan, "ae@test", "แก้กำหนดการหลังกำหนดการครบแล้ว") && has(h.plan, "admin@test", "แก้กำหนดการหลังกำหนดการครบแล้ว"), h.plan);
     check("รายชั่วโมง: AE ได้ฉบับเดียว", h.mail.recipients.filter(function (e) { return e === "ae@test"; }).length === 1, h.mail);
     check("รายชั่วโมง dry-run: ไม่ส่งเมล", h.mail.sent === 0, h.mail);
 
@@ -570,15 +616,15 @@ function plTestPhaseDNotify() {
     p.setProperty(hourlyKey, String(logFrom - 1));          // รูปแบบเก่า (เลขแถวอย่างเดียว) ต้องยังอ่านได้
     var h1 = plHourlyNotify_({ quota: 1 });
     var st1 = plHourlyState_(hourlyKey);
-    check("รายชั่วโมง โควต้าเหลือ 1: ส่ง 1 ค้าง 1 ไม่เลื่อนตำแหน่ง", h1.mail.sent === 1 && h1.mail.skipped.length === 1 && h1.advanced === false && st1.row === logFrom - 1, [h1, st1]);
+    check("รายชั่วโมง โควต้าเหลือ 1: ส่ง 1 ที่เหลือค้าง ไม่เลื่อนตำแหน่ง", h1.mail.sent === 1 && h1.mail.skipped.length === h1.mail.recipients.length - 1 && h1.mail.skipped.length >= 1 && h1.advanced === false && st1.row === logFrom - 1, [h1, st1]);
     var h2 = plHourlyNotify_({});
     var st2 = plHourlyState_(hourlyKey);
-    check("รอบถัดไป: ส่งเฉพาะคนที่ค้าง ไม่ส่งซ้ำคนที่ได้แล้ว", h2.mail.sent === 1 && h2.mail.sentTo[0] === h1.mail.skipped[0] && h2.mail.recipients.indexOf(h1.mail.sentTo[0]) < 0, h2);
+    check("รอบถัดไป: ส่งเฉพาะคนที่ค้าง ไม่ส่งซ้ำคนที่ได้แล้ว", h2.mail.sent === h1.mail.skipped.length && h2.mail.sentTo.slice().sort().join() === h1.mail.skipped.slice().sort().join() && h2.mail.recipients.indexOf(h1.mail.sentTo[0]) < 0, h2);
     check("ส่งครบ → เลื่อนตำแหน่งถึงท้าย Log", h2.advanced === true && st2.row === h2.toRow && !!st2.ts, [h2.toRow, st2]);
     var h3 = plHourlyNotify_({});
     check("รอบถัดไปไม่มีเรื่องใหม่ → ไม่ส่ง", h3.mail.sent === 0 && h3.events === 0, h3);
     out.push("INFO อีเมลจริงรอบรายชั่วโมง: " + JSON.stringify(h1.mail.sentTo.concat(h2.mail.sentTo)) + " → ส่งแทนไปที่เจ้าของสคริปต์");
-    out.push("INFO งานทดสอบ On air=" + kO.signCode + " A=" + kA.signCode + " B=" + kB.signCode + " C=" + kC.signCode + " (ทิ้งไว้ในสำเนา รอบหน้าล้างเอง)");
+    out.push("INFO งานทดสอบ On air=" + kO.signCode + " A=" + kA.signCode + " B=" + kB.signCode + " C=" + kC.signCode + " D=" + kD.signCode + " (ทิ้งไว้ในสำเนา รอบหน้าล้างเอง)");
   } catch (e) {
     out.push("FAIL ข้อผิดพลาด: " + (e.stack || e));
   } finally {

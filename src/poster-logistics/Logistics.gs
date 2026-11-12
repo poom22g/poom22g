@@ -25,7 +25,8 @@ var Config = {
 
   ROLES: ["AE", "Ops", "Production", "MA", "Installer", "Admin"],
   STATUS: {
-    WAIT_OPS: "รอ Ops รับงาน",
+    WAIT_MA: "รอ MA แจ้งแผน",          // AE สร้างงานแล้ว รอ MA บอกจุดส่ง + วันติดตั้ง + ทีมติดตั้ง
+    WAIT_SHIP: "รอกำหนดวันส่ง",         // MA แจ้งแผนแล้ว รอ Admin กำหนดวันส่ง
     WAIT_AE: "รอ AE รับทราบ",
     SCHEDULED: "มีกำหนด",
     SHIPPED: "ส่งแล้ว",
