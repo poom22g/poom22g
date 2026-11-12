@@ -325,7 +325,7 @@ function plCurrentUser_(tok) {
     var te = plAuthEmailFromToken_(tok);
     if (te) {
       users = users || plUsers_();
-      if (users[te]) return { email: te, name: users[te].name, role: users[te].role, via: "otp" };
+      if (users[te]) return { email: te, name: users[te].name, role: users[te].role, via: "token" };
     }
   }
   return { email: email, name: "", role: "", via: email ? "google" : "" };

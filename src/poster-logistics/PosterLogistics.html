@@ -105,6 +105,26 @@
   .plx-login .plx-btn { min-height:44px; font-size:14px; }
   .plx-login .alt { display:flex; gap:14px; flex-wrap:wrap; }
   .plx-login .alt button { border:0; background:none; padding:0; font:inherit; font-size:13px; color:var(--accent-strong); text-decoration:underline; cursor:pointer; }
+  .plx-modal { position:fixed; inset:0; background:rgba(16,41,74,.45); z-index:9500; display:none; overflow:auto; padding:16px; }
+  .plx-modal.open { display:flex; }
+  .plx-modal, .plx-modal * { box-sizing:border-box; }
+  .plx-mbox { min-width:0; }
+  .plx-mbox .plx-act { min-width:0; }
+  .plx-mbox { background:#fff; border-radius:14px; width:min(620px,100%); margin:auto; padding:16px; display:flex; flex-direction:column; gap:12px; color:var(--ink); }
+  .plx-mbox h3 { margin:0; font-size:16px; }
+  .plx-mh { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .plx-ulist { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .plx-urow { display:flex; align-items:center; gap:8px; padding:8px 10px; border-top:1px solid var(--border); font-size:13px; flex-wrap:wrap; }
+  .plx-urow:first-child { border-top:0; }
+  .plx-urow .who { flex:1 1 180px; min-width:0; overflow-wrap:anywhere; }
+  .plx-urow .who b { display:block; }
+  .plx-urow .who span { color:var(--text-dim); font-size:12px; }
+  .plx-urow .btns { display:flex; gap:6px; flex-wrap:wrap; }
+  .plx-urow .btns .plx-btn { min-height:32px; padding:0 10px; font-size:12px; }
+  .plx-role { border-radius:99px; background:var(--accent-soft); color:var(--accent-strong); padding:2px 9px; font-size:12px; font-weight:600; }
+  .plx-pwbox { background:#fff8e1; border:1px solid #e8b45c; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:6px; }
+  .plx-pwbox code { font-size:22px; font-weight:700; letter-spacing:2px; user-select:all; }
+  .plx-mbox input[type=text], .plx-mbox input[type=password], .plx-mbox input[type=email], .plx-mbox select { width:100%; min-height:40px; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font:inherit; font-size:14px; background:#fff; color:var(--ink); }
   .plx-msg.ok { background:#e5f5ec; color:#1d6b3f; border:1px solid #9fd3b3; }
   .plx-msg.warn { background:#fff4e0; color:#7a4a00; border:1px solid #e8b45c; }
   .plx-hist { display:flex; flex-direction:column; gap:6px; font-size:12px; }
@@ -151,9 +171,9 @@
   var view = "mine", month = "", stage = "", q = "", actAs = "";
   var cur = null, curHist = null, curSuggest = null, sending = false, pendPhotos = {};
   var curMsg = null; // ข้อความผลบันทึกล่าสุด · คงไว้ตอนวาดลิ้นชักใหม่ (กันหน้าเลื่อนแล้วกดพลาด)
-  var CACHE_KEY = "plx_cache_v1", TOK_KEY = "plx_tok", EMAIL_KEY = "plx_email";
+  var CACHE_KEY = "plx_cache_v1", TOK_KEY = "plx_tok", EMAIL_KEY = "plx_email", USER_KEY = "plx_user";
   // เข้าสู่ระบบ: token ได้จากรหัสทางอีเมล เก็บในเครื่อง ส่งไปกับทุกคำสั่ง (server ตรวจเองทุกครั้ง)
-  var tok = "", needsLogin = false, login = { step: "email", email: "", msg: "", bad: false, busy: false };
+  var tok = "", needsLogin = false, login = { step: "pw", user: "", email: "", msg: "", bad: false, busy: false };
   var MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
   var DOW = ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."];
   var ERR_TEXT = {
@@ -300,9 +320,10 @@
     tok = ""; lsDel(TOK_KEY); lsDel(CACHE_KEY);
     D = null; fromCache = false; me = { role: "" }; actAs = "";
     if (isOpen()) closeDrawer();
+    closeModal();
     var was = needsLogin;
     needsLogin = true;
-    if (!was || msg) { login.step = "email"; login.msg = msg || ""; login.bad = false; login.busy = false; }
+    if (!was || msg) { login.step = "pw"; login.msg = msg || ""; login.bad = false; login.busy = false; }
     showLogin(true);
     renderHead();
     renderLogin();
@@ -311,36 +332,69 @@
     var box = $(".plx-loginbox");
     if (!box) return;
     var m = login.msg ? '<div class="plx-msg ' + (login.bad ? "err" : "ok") + '">' + esc(login.msg) + "</div>" : "";
+    var btn = function (t, busyT) { return '<button type="submit" class="plx-btn pri"' + (login.busy ? " disabled" : "") + ">" + (login.busy ? busyT : t) + "</button>"; };
     var h;
-    if (login.step === "email") {
+    if (login.step === "pw") {
       h = '<form class="plx-login" novalidate><h3>เข้าสู่ระบบ</h3>' +
+        "<p>กรอกชื่อผู้ใช้ (หรืออีเมล) และรหัสผ่านที่ Admin สร้างให้</p>" + m +
+        '<input type="text" name="login" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="ชื่อผู้ใช้ หรืออีเมล" aria-label="ชื่อผู้ใช้หรืออีเมล" value="' + esc(login.user) + '">' +
+        '<input type="password" name="password" autocomplete="current-password" placeholder="รหัสผ่าน" aria-label="รหัสผ่าน">' +
+        btn("เข้าสู่ระบบ", "กำลังตรวจ…") +
+        '<div class="alt"><button type="button" data-l="mail">ลืมรหัสผ่าน? เข้าด้วยรหัสทางอีเมล</button></div></form>';
+    } else if (login.step === "email") {
+      h = '<form class="plx-login" novalidate><h3>เข้าด้วยรหัสทางอีเมล</h3>' +
         "<p>กรอกอีเมลที่ลงทะเบียนไว้กับ Admin ระบบจะส่งรหัส 6 หลักไปให้ทางอีเมล</p>" + m +
         '<input type="email" name="email" autocomplete="email" inputmode="email" placeholder="you@example.com" aria-label="อีเมล" value="' + esc(login.email) + '">' +
-        '<button type="submit" class="plx-btn pri"' + (login.busy ? " disabled" : "") + ">" + (login.busy ? "กำลังส่งรหัส…" : "ส่งรหัสเข้าสู่ระบบ") + "</button></form>";
+        btn("ส่งรหัสเข้าสู่ระบบ", "กำลังส่งรหัส…") +
+        '<div class="alt"><button type="button" data-l="pw">← เข้าด้วยรหัสผ่าน</button></div></form>';
     } else {
       h = '<form class="plx-login" novalidate><h3>กรอกรหัส 6 หลัก</h3>' +
         "<p>รหัสถูกส่งไปที่ <b>" + esc(login.email) + "</b> ใช้ได้ 10 นาที</p>" + m +
         '<input type="text" name="code" class="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" placeholder="••••••" aria-label="รหัส 6 หลัก">' +
-        '<button type="submit" class="plx-btn pri"' + (login.busy ? " disabled" : "") + ">" + (login.busy ? "กำลังตรวจรหัส…" : "เข้าสู่ระบบ") + "</button>" +
-        '<div class="alt"><button type="button" data-l="resend">ขอรหัสใหม่</button><button type="button" data-l="change">เปลี่ยนอีเมล</button></div></form>';
+        btn("เข้าสู่ระบบ", "กำลังตรวจรหัส…") +
+        '<div class="alt"><button type="button" data-l="resend">ขอรหัสใหม่</button><button type="button" data-l="change">เปลี่ยนอีเมล</button><button type="button" data-l="pw">เข้าด้วยรหัสผ่าน</button></div></form>';
     }
     box.innerHTML = h;
     var form = $("form", box), inp = $("input", box);
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       if (login.busy) return;
-      if (login.step === "email") sendCode(inp.value); else verifyCode(inp.value);
+      if (login.step === "pw") loginPw(form.login.value, form.password.value);
+      else if (login.step === "email") sendCode(form.email.value);
+      else verifyCode(form.code.value);
     });
-    var rs = $('[data-l="resend"]', box), ch = $('[data-l="change"]', box);
-    if (rs) rs.addEventListener("click", function () { if (!login.busy) sendCode(login.email); });
-    if (ch) ch.addEventListener("click", function () { login.step = "email"; login.msg = ""; renderLogin(); });
-    if (!login.busy) { try { inp.focus(); } catch (e) { } }
+    var go = function (sel, fn) { var el = $(sel, box); if (el) el.addEventListener("click", fn); };
+    go('[data-l="mail"]', function () { login.step = "email"; login.msg = ""; renderLogin(); });
+    go('[data-l="pw"]', function () { login.step = "pw"; login.msg = ""; renderLogin(); });
+    go('[data-l="resend"]', function () { if (!login.busy) sendCode(login.email); });
+    go('[data-l="change"]', function () { login.step = "email"; login.msg = ""; renderLogin(); });
+    if (!login.busy) { try { (login.step === "pw" && login.user ? form.password : inp).focus(); } catch (e) { } }
   }
   function authCall(fn, args, cb) {
     var r = google.script.run
       .withSuccessHandler(cb)
       .withFailureHandler(function (e) { cb({ ok: false, message: "เชื่อมต่อไม่สำเร็จ: " + (e && e.message ? e.message : e) }); });
     r[fn].apply(r, args);
+  }
+  function loggedIn(r) {
+    tok = r.token; lsSet(TOK_KEY, tok);
+    me = r.me || me;
+    login.step = "pw"; login.msg = "";
+    needsLogin = false; showLogin(false);
+    renderAll();
+    refresh();
+  }
+  function loginPw(user, pw) {
+    user = String(user || "").trim();
+    if (!user || !pw) { login.user = user; login.msg = "กรอกชื่อผู้ใช้และรหัสผ่าน"; login.bad = true; renderLogin(); return; }
+    login.user = user; lsSet(USER_KEY, user);
+    login.busy = true; login.msg = ""; renderLogin();
+    authCall("plAuthLogin", [user, pw], function (r) {
+      login.busy = false;
+      if (r && r.ok && r.token) { loggedIn(r); return; }
+      login.msg = (r && r.message) || "เข้าสู่ระบบไม่สำเร็จ"; login.bad = true;
+      renderLogin();
+    });
   }
   function sendCode(email) {
     email = String(email || "").trim().toLowerCase();
@@ -360,18 +414,103 @@
     login.busy = true; login.msg = ""; renderLogin();
     authCall("plAuthVerifyCode", [login.email, code], function (r) {
       login.busy = false;
-      if (r && r.ok && r.token) {
-        tok = r.token; lsSet(TOK_KEY, tok);
-        me = r.me || me;
-        login.step = "email"; login.msg = "";
-        needsLogin = false; showLogin(false);
-        renderAll();
-        refresh();
-        return;
-      }
+      if (r && r.ok && r.token) { loggedIn(r); return; }
       login.msg = (r && r.message) || "เข้าสู่ระบบไม่สำเร็จ"; login.bad = true;
       renderLogin();
     });
+  }
+
+  /* ------------------------- หน้าต่างบัญชี / จัดการผู้ใช้ ------------------------- */
+  function openModal(html) {
+    var m = $(".plx-modal");
+    $(".plx-mbox", m).innerHTML = html;
+    m.classList.add("open"); m.setAttribute("aria-hidden", "false");
+    return $(".plx-mbox", m);
+  }
+  function closeModal() { var m = $(".plx-modal"); if (m) { m.classList.remove("open"); m.setAttribute("aria-hidden", "true"); $(".plx-mbox", m).innerHTML = ""; } }
+  function mhead(t) { return '<div class="plx-mh"><h3>' + t + '</h3><button type="button" class="plx-x" data-m="close" aria-label="ปิด">✕</button></div>'; }
+  function mmsg(box, cls, html) { $(".plx-mmsg", box).innerHTML = html ? '<div class="plx-msg ' + cls + '">' + html + "</div>" : ""; }
+
+  function openPwModal() {
+    var box = openModal(mhead("🔑 เปลี่ยนรหัสผ่าน") +
+      '<form novalidate class="plx-act">' +
+      field("รหัสผ่านเดิม <span style=\"color:var(--text-faint)\">(ถ้ายังไม่เคยตั้ง เว้นว่างได้)</span>", '<input type="password" name="old" autocomplete="current-password">') +
+      field("รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)", '<input type="password" name="n1" autocomplete="new-password">', true) +
+      field("พิมพ์รหัสผ่านใหม่อีกครั้ง", '<input type="password" name="n2" autocomplete="new-password">', true) +
+      '<div class="plx-mmsg"></div><button type="submit" class="plx-btn pri">บันทึกรหัสผ่านใหม่</button></form>');
+    $('[data-m="close"]', box).addEventListener("click", closeModal);
+    var f = $("form", box);
+    f.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (f.n1.value !== f.n2.value) { mmsg(box, "err", "รหัสผ่านใหม่สองช่องไม่ตรงกัน"); return; }
+      var b = $('button[type="submit"]', f); b.disabled = true; b.textContent = "กำลังบันทึก…";
+      authCall("plAuthChangePassword", [tok, f.old.value, f.n1.value], function (r) {
+        b.disabled = false; b.textContent = "บันทึกรหัสผ่านใหม่";
+        if (r && r.ok) {
+          if (r.token) { tok = r.token; lsSet(TOK_KEY, tok); }
+          closeModal(); toast("เปลี่ยนรหัสผ่านแล้ว");
+        } else mmsg(box, "err", esc((r && r.message) || "บันทึกไม่สำเร็จ"));
+      });
+    });
+    try { f.old.focus(); } catch (e) { }
+  }
+
+  var usersState = null;
+  function openUsersModal() {
+    var box = openModal(mhead("👥 จัดการผู้ใช้") + '<div class="plx-sub">กำลังโหลดรายชื่อ…</div>');
+    $('[data-m="close"]', box).addEventListener("click", closeModal);
+    authCall("plAdminUsers", [tok], function (r) {
+      if (r && r.code === "LOGIN_REQUIRED") { closeModal(); requireLogin("กรุณาเข้าสู่ระบบใหม่"); return; }
+      if (!r || !r.ok) { box.innerHTML = mhead("👥 จัดการผู้ใช้") + '<div class="plx-msg err">' + esc((r && r.message) || "โหลดไม่สำเร็จ") + "</div>"; $('[data-m="close"]', box).addEventListener("click", closeModal); return; }
+      usersState = r; drawUsers(box, null, "");
+    });
+  }
+  function drawUsers(box, edit, resultHtml) {
+    var U = usersState, e = edit || { email: "", name: "", role: "AE", username: "" };
+    var rows = U.users.map(function (u, i) {
+      return '<div class="plx-urow"><div class="who"><b>' + esc(u.name || u.email) + ' <span class="plx-role">' + esc(u.role || "ไม่มีบทบาท") + "</span></b><span>" + esc(u.email) + (u.username ? " · ชื่อผู้ใช้ " + esc(u.username) : "") + " · " + (u.hasPassword ? "มีรหัสผ่าน" : "ยังไม่มีรหัสผ่าน") + '</span></div>' +
+        '<div class="btns"><button type="button" class="plx-btn" data-u="edit" data-i="' + i + '">แก้ไข</button><button type="button" class="plx-btn warn" data-u="reset" data-i="' + i + '">' + (u.hasPassword ? "รีเซ็ตรหัสผ่าน" : "สร้างรหัสผ่าน") + "</button></div></div>";
+    }).join("");
+    box.innerHTML = mhead("👥 จัดการผู้ใช้") + (resultHtml || "") +
+      '<div class="plx-ulist">' + (rows || '<div class="plx-urow">ยังไม่มีผู้ใช้</div>') + "</div>" +
+      '<form novalidate class="plx-act" style="border-top:1px solid var(--border);padding-top:12px"><h3 style="font-size:14px;margin:0">' + (e.email ? "แก้ไขผู้ใช้" : "เพิ่มผู้ใช้ใหม่ (ระบบสร้างรหัสผ่านให้อัตโนมัติ)") + "</h3>" +
+      field("อีเมล", '<input type="email" name="email" autocomplete="off" ' + (e.email ? "readonly" : "") + ' value="' + esc(e.email) + '">', true) +
+      field("ชื่อ", '<input type="text" name="name" autocomplete="off" value="' + esc(e.name) + '">') +
+      '<div class="plx-row2">' + field("บทบาท", '<select name="role">' + U.roles.map(function (r) { return "<option" + (r === e.role ? " selected" : "") + ">" + esc(r) + "</option>"; }).join("") + "</select>", true) +
+      field("ชื่อผู้ใช้ (a-z 0-9 . _ -)", '<input type="text" name="username" autocomplete="off" autocapitalize="none" value="' + esc(e.username) + '">') + "</div>" +
+      '<div class="plx-mmsg"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="submit" class="plx-btn pri">' + (e.email ? "บันทึก" : "เพิ่มผู้ใช้") + "</button>" +
+      (e.email ? '<button type="button" class="plx-btn" data-u="new">ยกเลิกการแก้ไข</button>' : "") + "</div></form>";
+    $('[data-m="close"]', box).addEventListener("click", closeModal);
+    $$('[data-u="edit"]', box).forEach(function (b) { b.addEventListener("click", function () { drawUsers(box, U.users[+b.getAttribute("data-i")], ""); }); });
+    $$('[data-u="reset"]', box).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var u = U.users[+b.getAttribute("data-i")];
+        if (!confirm((u.hasPassword ? "รีเซ็ตรหัสผ่านของ " : "สร้างรหัสผ่านให้ ") + (u.name || u.email) + "?" + (u.hasPassword ? "\nรหัสเดิมและการเข้าสู่ระบบค้างอยู่จะใช้ไม่ได้ทันที" : ""))) return;
+        b.disabled = true;
+        authCall("plAdminResetPassword", [tok, u.email], function (r) {
+          if (r && r.ok) { u.hasPassword = true; drawUsers(box, null, pwResult(u.name || u.email, u.email, r.password)); }
+          else { b.disabled = false; mmsg(box, "err", esc((r && r.message) || "ไม่สำเร็จ")); }
+        });
+      });
+    });
+    var nw = $('[data-u="new"]', box); if (nw) nw.addEventListener("click", function () { drawUsers(box, null, ""); });
+    var f = $("form", box);
+    f.addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var btn = $('button[type="submit"]', f); btn.disabled = true;
+      authCall("plAdminSaveUser", [tok, { email: f.email.value, name: f.name.value, role: f.role.value, username: f.username.value }], function (r) {
+        btn.disabled = false;
+        if (!r || !r.ok) { mmsg(box, "err", esc((r && r.message) || "บันทึกไม่สำเร็จ")); return; }
+        var u = r.user, found = false;
+        U.users = U.users.map(function (x) { if (x.email === u.email) { found = true; return u; } return x; });
+        if (!found) U.users.push(u);
+        drawUsers(box, null, r.password ? pwResult(u.name || u.email, u.email, r.password) : '<div class="plx-msg ok">บันทึกแล้ว ✔</div>');
+      });
+    });
+  }
+  function pwResult(who, email, pw) {
+    return '<div class="plx-pwbox"><div>รหัสผ่านของ <b>' + esc(who) + "</b> (" + esc(email) + ")</div><code>" + esc(pw) + '</code>' +
+      '<div class="plx-sub">แสดงครั้งเดียว ระบบไม่เก็บรหัสนี้ไว้ในรูปที่อ่านกลับได้ — คัดลอกส่งให้เจ้าตัว แล้วให้เข้าระบบแล้วกด 🔑 เปลี่ยนเป็นรหัสของตัวเอง</div></div>';
   }
 
   /* ------------------------- วาดหน้าหลัก ------------------------- */
@@ -381,7 +520,7 @@
     root.innerHTML =
       '<div class="plx">' +
         '<div class="bl-card"><div class="plx-head"><div><div class="bl-title">🚚 ติดตามขนส่ง Poster</div><div class="plx-who"></div><div class="plx-src"></div></div>' +
-        '<div class="plx-hbtns"><button type="button" class="plx-btn" data-a="refresh">🔄 รีเฟรช</button><button type="button" class="plx-btn" data-a="logout" style="display:none">ออกจากระบบ</button><button type="button" class="plx-btn" data-a="back">← มุมมองเดิม</button></div></div>' +
+        '<div class="plx-hbtns"><button type="button" class="plx-btn" data-a="refresh">🔄 รีเฟรช</button><button type="button" class="plx-btn" data-a="pw" style="display:none">🔑 รหัสผ่าน</button><button type="button" class="plx-btn" data-a="users" style="display:none">👥 ผู้ใช้</button><button type="button" class="plx-btn" data-a="logout" style="display:none">ออกจากระบบ</button><button type="button" class="plx-btn" data-a="back">← มุมมองเดิม</button></div></div>' +
         '<div class="plx-testbox"></div>' +
         '<div class="plx-vseg-wrap"><div class="bl-vseg" role="tablist"></div></div>' +
         '<div class="plx-bar"></div><div class="plx-chips"></div></div>' +
@@ -389,15 +528,20 @@
         '<div class="bl-card plx-loginbox" style="display:none"></div>' +
       '</div>' +
       '<div class="plx-back"></div><aside class="plx-drawer" aria-hidden="true"><div class="plx-dh"><div class="t"></div><button type="button" class="plx-x" aria-label="ปิด">✕</button></div><div class="plx-db"></div></aside>' +
+      '<div class="plx-modal" aria-hidden="true"><div class="plx-mbox"></div></div>' +
       '<div class="plx-toast"></div>';
     $('[data-a="refresh"]').addEventListener("click", refresh);
     $('[data-a="logout"]').addEventListener("click", function () { requireLogin("ออกจากระบบแล้ว"); });
+    $('[data-a="pw"]').addEventListener("click", openPwModal);
+    $('[data-a="users"]').addEventListener("click", openUsersModal);
+    $(".plx-modal").addEventListener("click", function (e) { if (e.target === this) closeModal(); });
     tok = lsGet(TOK_KEY) || "";
     login.email = lsGet(EMAIL_KEY) || "";
+    login.user = lsGet(USER_KEY) || "";
     $('[data-a="back"]').addEventListener("click", function () { closeDrawer(); if (opts.back) opts.back(); });
     $(".plx-back").addEventListener("click", closeDrawer);
     $(".plx-x").addEventListener("click", closeDrawer);
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && isOpen()) closeDrawer(); });
+    document.addEventListener("keydown", function (e) { if (e.key !== "Escape") return; var md = $(".plx-modal"); if (md && md.classList.contains("open")) closeModal(); else if (isOpen()) closeDrawer(); });
     loadCache();
     renderAll();
     refresh();
@@ -409,7 +553,10 @@
     var who = me && me.email ? (esc(me.name || me.email) + " · บทบาท " + esc(me.role || "ไม่มีในรายชื่อ Users (ดูได้อย่างเดียว)")) : "กำลังตรวจผู้ใช้…";
     if (needsLogin) who = "ยังไม่ได้เข้าสู่ระบบ";
     $(".plx-who").innerHTML = who;
-    $('[data-a="logout"]').style.display = !needsLogin && me && me.via === "otp" ? "" : "none";
+    var inn = !needsLogin && me && me.email;
+    $('[data-a="logout"]').style.display = !needsLogin && me && me.via === "token" ? "" : "none";
+    $('[data-a="pw"]').style.display = inn && me.role ? "" : "none";
+    $('[data-a="users"]').style.display = inn && me.role === "Admin" ? "" : "none";
     var src = $(".plx-src");
     if (loading) { src.className = "plx-src"; src.textContent = D ? "กำลังโหลดข้อมูลล่าสุด…" + (fromCache ? " (ตอนนี้แสดงข้อมูลจาก cache " + D.fetchedAt + ")" : "") : "กำลังโหลด…"; }
     else if (D) { src.className = "plx-src" + (fromCache ? " cache" : ""); src.textContent = (fromCache ? "ข้อมูลจาก cache " : "ข้อมูลล่าสุดจากชีต ") + D.fetchedAt; }

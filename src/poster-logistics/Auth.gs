@@ -3,8 +3,10 @@
  *
  * ใครคือผู้ใช้ (plCurrentUser_ ใน Logistics.gs):
  *   1) บัญชี Google ที่ระบบอ่านอีเมลได้ และอยู่ในแท็บ Users → ใช้ได้เลย ไม่ต้องกรอกอะไร
- *   2) นอกนั้น → เข้าสู่ระบบด้วย "อีเมล + รหัส 6 หลัก" ที่ส่งไปทางอีเมล (ต้องเป็นอีเมลในแท็บ Users)
+ *   2) นอกนั้น → เข้าสู่ระบบด้วย "ชื่อผู้ใช้/อีเมล + รหัสผ่าน" (Admin สร้างให้ในหน้า จัดการผู้ใช้)
+ *      หรือ "อีเมล + รหัส 6 หลัก" ที่ส่งไปทางอีเมล (ต้องเป็นอีเมลในแท็บ Users)
  *      ผ่านแล้วได้ token อายุ PL_AUTH.SESSION_DAYS วัน เก็บในเครื่องผู้ใช้ และส่งมากับทุกคำสั่ง
+ *      รหัสผ่านเก็บเป็นค่าแฮช (มี salt) ใน Script Properties เท่านั้น — ไม่เก็บในชีต (ชีตแชร์ลิงก์อยู่)
  *   บทบาทอ่านจากแท็บ Users ทุกครั้ง → ลบคนออกจาก Users = หมดสิทธิ์ทันที แม้ token ยังไม่หมดอายุ
  *
  * หน้าเว็บเรียกทุกคำสั่งผ่าน plCall(token, ชื่อคำสั่ง, [ค่า]) — ไม่รู้ว่าเป็นใคร = LOGIN_REQUIRED
@@ -95,7 +97,11 @@ function plAuthEmailFromToken_(tok) {
     if (!(exp > Date.now())) return "";
     var email = plAuthNormEmail_(Utilities.newBlob(Utilities.base64DecodeWebSafe(p[1])).getDataAsString("UTF-8"));
     if (!email) return "";
-    return plAuthSame_(p[3], plAuthSign_("v1|" + email + "|" + exp)) ? email : "";
+    if (!plAuthSame_(p[3], plAuthSign_("v1|" + email + "|" + exp))) return "";
+    // ถูกยกเลิกภายหลัง (เปลี่ยน/รีเซ็ตรหัสผ่าน) → token ที่ออกก่อนเวลานั้นใช้ไม่ได้
+    var iat = exp - PL_AUTH.SESSION_DAYS * 864e5;
+    var min = Number(PropertiesService.getScriptProperties().getProperty(plPwMinKey_(email)) || 0);
+    return iat >= min ? email : "";
   } catch (e) {
     return "";
   }
@@ -179,7 +185,7 @@ function plAuthVerifyCode(email, code) {
     if (!u) throw plErr_("FORBIDDEN", "อีเมลนี้ไม่อยู่ในรายชื่อผู้ใช้แล้ว กรุณาแจ้ง Admin");
     var t = plAuthIssueToken_(em);
     console.log("เข้าสู่ระบบด้วยรหัสทางอีเมล: " + em + " (" + u.role + ")");
-    return { ok: true, token: t.token, exp: t.exp, me: { email: em, name: u.name, role: u.role, via: "otp" } };
+    return { ok: true, token: t.token, exp: t.exp, me: { email: em, name: u.name, role: u.role, via: "token" } };
   });
 }
 
@@ -247,4 +253,203 @@ function plAuthRevokeAll() {
   plRequireAdminCaller_();
   PropertiesService.getScriptProperties().deleteProperty("PL_AUTH_SECRET");
   console.log("ยกเลิก token ทั้งหมดแล้ว ทุกคนที่เข้าด้วยรหัสทางอีเมลต้องเข้าสู่ระบบใหม่");
+}
+
+/* ---------------------------------------------------------------------
+ * รหัสผ่าน (ชื่อผู้ใช้หรืออีเมล + รหัสผ่าน)
+ *  - แท็บ Users: A=email B=ชื่อ C=บทบาท D=ชื่อผู้ใช้ (ไม่บังคับ) · ไม่เก็บรหัสผ่านในชีต
+ *  - รหัสผ่านเก็บเป็นแฮช+salt ใน Script Properties (PL_PW_<แฮชอีเมล>)
+ *  - กรอกผิด PL_PW.FAIL_MAX ครั้ง → ล็อก PL_PW.LOCK_SEC วินาที
+ * ------------------------------------------------------------------- */
+
+var PL_PW = { ROUNDS: 500, MIN_LEN: 8, MAX_LEN: 100, FAIL_MAX: 5, LOCK_SEC: 900, ALPHABET: "abcdefghjkmnpqrstuvwxyz23456789" };
+var PL_USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/;
+
+function plPwKey_(email) { return "PL_PW_" + plAuthSha_(email).slice(0, 32); }
+function plPwMinKey_(email) { return "PL_TOKMIN_" + plAuthSha_(email).slice(0, 32); }
+
+function plPwHash_(salt, pw, rounds) {
+  var h = plAuthSha_(salt + "|" + pw);
+  for (var i = 0; i < rounds; i++) h = plAuthSha_(h + "|" + salt + "|" + pw);
+  return h;
+}
+
+// ตั้งรหัสผ่านใหม่ + ยกเลิก token เดิมของคนนี้ทั้งหมด
+function plPwSet_(email, pw) {
+  var p = PropertiesService.getScriptProperties();
+  var salt = Utilities.getUuid();
+  p.setProperty(plPwKey_(email), JSON.stringify({ s: salt, n: PL_PW.ROUNDS, h: plPwHash_(salt, pw, PL_PW.ROUNDS), at: Date.now() }));
+  p.setProperty(plPwMinKey_(email), String(Date.now()));
+}
+
+function plPwHas_(email) { return !!PropertiesService.getScriptProperties().getProperty(plPwKey_(email)); }
+
+// ไม่มีรหัสผ่านก็ยังคำนวณแฮชปลอมหนึ่งรอบ ให้ใช้เวลาใกล้เคียงกัน (ไม่บอกใบ้ว่าบัญชีมีอยู่ไหม)
+function plPwCheck_(email, pw) {
+  var raw = PropertiesService.getScriptProperties().getProperty(plPwKey_(email));
+  if (!raw) { plPwHash_("none", pw, PL_PW.ROUNDS); return false; }
+  var rec = JSON.parse(raw);
+  return plAuthSame_(rec.h, plPwHash_(rec.s, pw, rec.n));
+}
+
+// รหัสผ่านสุ่ม 10 ตัว (ไม่มี 0/o/1/l/i) แบ่งครึ่งด้วยขีด เช่น k7m2p-x9qte
+function plAuthNewPassword_() {
+  var out = "";
+  while (out.length < 10) {
+    var b = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, Utilities.getUuid() + "|" + Utilities.getUuid(), Utilities.Charset.UTF_8);
+    for (var i = 0; i < b.length && out.length < 10; i++) {
+      var v = b[i] & 255;
+      if (v < 248) out += PL_PW.ALPHABET.charAt(v % PL_PW.ALPHABET.length);     // 248 = 31 × 8 (ไม่เอียง)
+    }
+  }
+  return out.slice(0, 5) + "-" + out.slice(5);
+}
+
+// อ่านแท็บ Users ทั้ง 4 คอลัมน์ → [{ email, name, role, username, row }]
+function plUserRows_() {
+  var sh = plSheet_(Config.SHEET_USERS), last = sh.getLastRow(), out = [];
+  if (last < 2) return out;
+  sh.getRange(2, 1, last - 1, 4).getDisplayValues().forEach(function (r, i) {
+    var email = plAuthNormEmail_(r[0]);
+    if (!email) return;
+    out.push({ email: email, name: String(r[1] || "").trim(), role: String(r[2] || "").trim(), username: String(r[3] || "").trim().toLowerCase(), row: i + 2 });
+  });
+  return out;
+}
+
+// ชื่อผู้ใช้หรืออีเมล → อีเมลของบัญชีที่มีบทบาทถูกต้อง · ไม่พบ → ""
+function plFindLogin_(login) {
+  var lg = String(login || "").trim().toLowerCase(), rows = plUserRows_();
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (Config.ROLES.indexOf(r.role) < 0) continue;
+    if (lg.indexOf("@") >= 0 ? r.email === lg : (r.username && r.username === lg)) return r.email;
+  }
+  return "";
+}
+
+function plAuthTokenResult_(email, u, extra) {
+  var t = plAuthIssueToken_(email);
+  var out = { ok: true, token: t.token, exp: t.exp, me: { email: email, name: u.name, role: u.role, via: "token" } };
+  if (extra) Object.keys(extra).forEach(function (k) { out[k] = extra[k]; });
+  return out;
+}
+
+// หน้าเว็บเรียก: เข้าสู่ระบบด้วยชื่อผู้ใช้/อีเมล + รหัสผ่าน
+function plAuthLogin(login, password) {
+  return plApi_(function () {
+    var bad = "ชื่อผู้ใช้/อีเมล หรือรหัสผ่านไม่ถูกต้อง";
+    var lg = String(login == null ? "" : login).trim().toLowerCase();
+    var pw = String(password == null ? "" : password);
+    if (!lg || lg.length > 254 || !pw || pw.length > PL_PW.MAX_LEN) throw plErr_("INVALID", bad);
+    var cache = CacheService.getScriptCache(), fk = plAuthKey_("pl_pwf_", lg);
+    var fails = Number(cache.get(fk) || 0);
+    if (fails >= PL_PW.FAIL_MAX) throw plErr_("TOO_MANY", "กรอกผิดหลายครั้ง ลองใหม่ในอีก " + Math.round(PL_PW.LOCK_SEC / 60) + " นาที หรือให้ Admin รีเซ็ตรหัสผ่านให้");
+    var email = plFindLogin_(lg);
+    var ok = email ? plPwCheck_(email, pw) : (plPwCheck_("nobody@invalid.test", pw), false);
+    if (!ok) {
+      cache.put(fk, String(fails + 1), PL_PW.LOCK_SEC);
+      var left = PL_PW.FAIL_MAX - fails - 1;
+      throw plErr_("INVALID", bad + (left > 0 ? " (เหลืออีก " + left + " ครั้ง)" : " · ล็อกชั่วคราว"));
+    }
+    cache.remove(fk);
+    var u = plUsers_()[email];
+    if (!u) throw plErr_("FORBIDDEN", "บัญชีนี้ไม่อยู่ในรายชื่อผู้ใช้แล้ว กรุณาแจ้ง Admin");
+    console.log("เข้าสู่ระบบด้วยรหัสผ่าน: " + email + " (" + u.role + ")");
+    return plAuthTokenResult_(email, u);
+  });
+}
+
+// หน้าเว็บเรียก: เปลี่ยนรหัสผ่านของตัวเอง (เคยตั้งแล้วต้องใส่รหัสเดิม) · ได้ token ใหม่กลับไป (token เก่าถูกยกเลิก)
+function plAuthChangePassword(tok, oldPw, newPw) {
+  return plApi_(function () {
+    var user = plCurrentUser_(tok);
+    if (!user.email || !user.role) throw plErr_("LOGIN_REQUIRED", "กรุณาเข้าสู่ระบบก่อนใช้งาน");
+    var np = String(newPw == null ? "" : newPw), op = String(oldPw == null ? "" : oldPw);
+    if (np.length < PL_PW.MIN_LEN) throw plErr_("INVALID", "รหัสผ่านใหม่ต้องยาวอย่างน้อย " + PL_PW.MIN_LEN + " ตัวอักษร");
+    if (np.length > PL_PW.MAX_LEN) throw plErr_("INVALID", "รหัสผ่านยาวเกินไป");
+    if (/^(.)\1+$/.test(np)) throw plErr_("INVALID", "รหัสผ่านง่ายเกินไป");
+    var cache = CacheService.getScriptCache(), fk = plAuthKey_("pl_pwf_", user.email);
+    if (plPwHas_(user.email)) {
+      var fails = Number(cache.get(fk) || 0);
+      if (fails >= PL_PW.FAIL_MAX) throw plErr_("TOO_MANY", "กรอกรหัสเดิมผิดหลายครั้ง ลองใหม่ในอีก " + Math.round(PL_PW.LOCK_SEC / 60) + " นาที");
+      if (!plPwCheck_(user.email, op)) { cache.put(fk, String(fails + 1), PL_PW.LOCK_SEC); throw plErr_("INVALID", "รหัสผ่านเดิมไม่ถูกต้อง"); }
+      cache.remove(fk);
+      if (op === np) throw plErr_("INVALID", "รหัสผ่านใหม่ต้องไม่ซ้ำรหัสเดิม");
+    }
+    plPwSet_(user.email, np);
+    withLock_(function () { appendLog_([{ email: user.email, action: "เปลี่ยนรหัสผ่านของตัวเอง" }]); });
+    return plAuthTokenResult_(user.email, { name: user.name, role: user.role });
+  });
+}
+
+/* ---------------------------------------------------------------------
+ * Admin: จัดการผู้ใช้ (เพิ่ม/แก้ผู้ใช้ + สร้าง/รีเซ็ตรหัสผ่านแบบสุ่ม แสดงครั้งเดียว)
+ * ------------------------------------------------------------------- */
+
+function plAdminUser_(tok) {
+  var u = plCurrentUser_(tok);
+  if (!u.email || !u.role) throw plErr_("LOGIN_REQUIRED", "กรุณาเข้าสู่ระบบก่อนใช้งาน");
+  if (u.role !== "Admin") throw plErr_("FORBIDDEN", "เฉพาะ Admin เท่านั้น");
+  return u;
+}
+
+function plAdminUsers(tok) {
+  return plApi_(function () {
+    plAdminUser_(tok);
+    return {
+      ok: true, roles: Config.ROLES,
+      users: plUserRows_().map(function (r) { return { email: r.email, name: r.name, role: r.role, username: r.username, hasPassword: plPwHas_(r.email), roleOk: Config.ROLES.indexOf(r.role) >= 0 }; })
+    };
+  });
+}
+
+// o = { email, name, role, username } · อีเมลใหม่ → เพิ่มแถว + สร้างรหัสผ่านสุ่ม (คืนมาครั้งเดียว) · อีเมลเดิม → แก้ชื่อ/บทบาท/ชื่อผู้ใช้
+function plAdminSaveUser(tok, o) {
+  return plApi_(function () {
+    var admin = plAdminUser_(tok);
+    o = o || {};
+    var email = plAuthNormEmail_(o.email);
+    if (!email) throw plErr_("INVALID", "รูปแบบอีเมลไม่ถูกต้อง");
+    var name = String(o.name == null ? "" : o.name).trim().slice(0, 60);
+    var role = String(o.role == null ? "" : o.role).trim();
+    if (Config.ROLES.indexOf(role) < 0) throw plErr_("INVALID", "บทบาทต้องเป็น " + Config.ROLES.join(" / "));
+    var username = String(o.username == null ? "" : o.username).trim().toLowerCase();
+    if (username && !PL_USERNAME_RE.test(username)) throw plErr_("INVALID", "ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 . _ - ยาว 3–30 ตัว และขึ้นต้นด้วยตัวอักษรหรือตัวเลข");
+    var password = "", created = false;
+    withLock_(function () {
+      var rows = plUserRows_(), mine = null;
+      rows.forEach(function (r) { if (r.email === email) mine = r; });
+      if (username) rows.forEach(function (r) { if (r.username === username && r.email !== email) throw plErr_("INVALID", "ชื่อผู้ใช้ \"" + username + "\" มีคนใช้แล้ว"); });
+      if (mine && email === admin.email && role !== "Admin") throw plErr_("INVALID", "ลดบทบาทของตัวเองจาก Admin ไม่ได้ (ให้ Admin คนอื่นทำ)");
+      var sh = plSheet_(Config.SHEET_USERS);
+      if (!String(sh.getRange(1, 4).getDisplayValue() || "").trim()) sh.getRange(1, 4).setValue("ชื่อผู้ใช้").setFontWeight("bold");
+      var row = mine ? mine.row : Math.max(sh.getLastRow(), 1) + 1;
+      sh.getRange(row, 1, 1, 4).setValues([[email, name, role, username]]);
+      created = !mine;
+      if (created) { password = plAuthNewPassword_(); plPwSet_(email, password); }
+      else if (mine.role !== role) PropertiesService.getScriptProperties().setProperty(plPwMinKey_(email), String(Date.now()));   // เปลี่ยนบทบาท → ให้เข้าสู่ระบบใหม่
+      appendLog_([{ email: admin.email, action: created ? "เพิ่มผู้ใช้ (Admin)" : "แก้ผู้ใช้ (Admin)", newVal: email + " · " + role + (username ? " · " + username : "") }]);
+    });
+    plClearUsersCache();
+    var out = { ok: true, created: created, user: { email: email, name: name, role: role, username: username, hasPassword: plPwHas_(email) } };
+    if (password) out.password = password;
+    return out;
+  });
+}
+
+// รีเซ็ตรหัสผ่านของผู้ใช้ในแท็บ Users → รหัสสุ่มใหม่ (คืนมาครั้งเดียว) + ยกเลิก token เดิมของคนนั้น
+function plAdminResetPassword(tok, email) {
+  return plApi_(function () {
+    var admin = plAdminUser_(tok);
+    var em = plAuthNormEmail_(email);
+    var rows = plUserRows_(), found = null;
+    rows.forEach(function (r) { if (r.email === em) found = r; });
+    if (!found || Config.ROLES.indexOf(found.role) < 0) throw plErr_("NOT_FOUND", "ไม่พบผู้ใช้นี้ในแท็บ Users (หรือบทบาทไม่ถูกต้อง)");
+    var password = plAuthNewPassword_();
+    plPwSet_(em, password);
+    CacheService.getScriptCache().remove(plAuthKey_("pl_pwf_", em));
+    withLock_(function () { appendLog_([{ email: admin.email, action: "รีเซ็ตรหัสผ่านผู้ใช้ (Admin)", newVal: em }]); });
+    return { ok: true, email: em, password: password };
+  });
 }
