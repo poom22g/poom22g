@@ -308,7 +308,7 @@ var PL_ACTIONS = {
 // สถานะที่กำหนดการครบแล้ว (มีทั้งวันส่งและแผนติดตั้ง) — แก้หลังจากนี้ต้องใส่เหตุผล
 var PL_SETTLED = [PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.RESHIP];
 function plAct_(key, extra) {
-  var a = PL_ACTIONS[key], o = { action: a.label, roles: a.roles, from: a.from };
+  var a = PL_ACTIONS[key], o = { action: a.label, roles: plActionRoles_(key), from: a.from };
   Object.keys(extra).forEach(function (k) { o[k] = extra[k]; });
   return o;
 }
@@ -527,7 +527,7 @@ function plListPosterJobs_(user, filters) {
   });
   return {
     ok: true, me: { email: user.email, name: user.name, role: user.role, via: user.via || "" },
-    testMode: plIsTestMode_(), actions: PL_ACTIONS, status: Config.STATUS, teams: Config.INSTALL_TEAMS,
+    testMode: plIsTestMode_(), actions: plEffectiveActions_(), status: Config.STATUS, teams: Config.INSTALL_TEAMS,
     conditions: Config.CONDITIONS, goLive: Config.GO_LIVE_MONTH,
     jobs: jobs, groups: order.map(function (k) { return groups[k]; }),
     fetchedAt: Utilities.formatDate(new Date(), Config.TZ, "yyyy-MM-dd HH:mm")

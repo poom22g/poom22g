@@ -305,14 +305,15 @@ function plAuthNewPassword_() {
   return out.slice(0, 5) + "-" + out.slice(5);
 }
 
-// อ่านแท็บ Users ทั้ง 4 คอลัมน์ → [{ email, name, role, username, row }]
+// อ่านแท็บ Users ทั้ง 5 คอลัมน์ → [{ email, name, role, username, status, row }]  (status: active | inactive)
 function plUserRows_() {
   var sh = plSheet_(Config.SHEET_USERS), last = sh.getLastRow(), out = [];
   if (last < 2) return out;
-  sh.getRange(2, 1, last - 1, 4).getDisplayValues().forEach(function (r, i) {
+  sh.getRange(2, 1, last - 1, 5).getDisplayValues().forEach(function (r, i) {
     var email = plAuthNormEmail_(r[0]);
     if (!email) return;
-    out.push({ email: email, name: String(r[1] || "").trim(), role: String(r[2] || "").trim(), username: String(r[3] || "").trim().toLowerCase(), row: i + 2 });
+    out.push({ email: email, name: String(r[1] || "").trim(), role: String(r[2] || "").trim(), username: String(r[3] || "").trim().toLowerCase(),
+      status: plIsInactive_(r[4]) ? "inactive" : "active", row: i + 2 });
   });
   return out;
 }
@@ -322,7 +323,7 @@ function plFindLogin_(login) {
   var lg = String(login || "").trim().toLowerCase(), rows = plUserRows_();
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
-    if (Config.ROLES.indexOf(r.role) < 0) continue;
+    if (Config.ROLES.indexOf(r.role) < 0 || r.status === "inactive") continue;
     if (lg.indexOf("@") >= 0 ? r.email === lg : (r.username && r.username === lg)) return r.email;
   }
   return "";
@@ -399,12 +400,12 @@ function plAdminUsers(tok) {
     plAdminUser_(tok);
     return {
       ok: true, roles: Config.ROLES,
-      users: plUserRows_().map(function (r) { return { email: r.email, name: r.name, role: r.role, username: r.username, hasPassword: plPwHas_(r.email), roleOk: Config.ROLES.indexOf(r.role) >= 0 }; })
+      users: plUserRows_().map(function (r) { return { email: r.email, name: r.name, role: r.role, username: r.username, status: r.status, hasPassword: plPwHas_(r.email), roleOk: Config.ROLES.indexOf(r.role) >= 0 }; })
     };
   });
 }
 
-// o = { email, name, role, username } · อีเมลใหม่ → เพิ่มแถว + สร้างรหัสผ่านสุ่ม (คืนมาครั้งเดียว) · อีเมลเดิม → แก้ชื่อ/บทบาท/ชื่อผู้ใช้
+// o = { email, name, role, username, status } · อีเมลใหม่ → เพิ่มแถว + สร้างรหัสผ่านสุ่ม (คืนมาครั้งเดียว) · อีเมลเดิม → แก้ชื่อ/บทบาท/ชื่อผู้ใช้
 function plAdminSaveUser(tok, o) {
   return plApi_(function () {
     var admin = plAdminUser_(tok);
@@ -416,23 +417,30 @@ function plAdminSaveUser(tok, o) {
     if (Config.ROLES.indexOf(role) < 0) throw plErr_("INVALID", "บทบาทต้องเป็น " + Config.ROLES.join(" / "));
     var username = String(o.username == null ? "" : o.username).trim().toLowerCase();
     if (username && !PL_USERNAME_RE.test(username)) throw plErr_("INVALID", "ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 . _ - ยาว 3–30 ตัว และขึ้นต้นด้วยตัวอักษรหรือตัวเลข");
-    var password = "", created = false;
+    var status = o.status == null || o.status === "" ? "" : String(o.status).trim().toLowerCase();
+    if (status && status !== "active" && status !== "inactive") throw plErr_("INVALID", "สถานะต้องเป็น active หรือ inactive");
+    var password = "", created = false, finalStatus = "active";
     withLock_(function () {
       var rows = plUserRows_(), mine = null;
       rows.forEach(function (r) { if (r.email === email) mine = r; });
       if (username) rows.forEach(function (r) { if (r.username === username && r.email !== email) throw plErr_("INVALID", "ชื่อผู้ใช้ \"" + username + "\" มีคนใช้แล้ว"); });
       if (mine && email === admin.email && role !== "Admin") throw plErr_("INVALID", "ลดบทบาทของตัวเองจาก Admin ไม่ได้ (ให้ Admin คนอื่นทำ)");
+      var newStatus = status || (mine ? mine.status : "active");
+      finalStatus = newStatus;
+      if (mine && email === admin.email && newStatus === "inactive") throw plErr_("INVALID", "ระงับบัญชีของตัวเองไม่ได้ (ให้ Admin คนอื่นทำ)");
       var sh = plSheet_(Config.SHEET_USERS);
       if (!String(sh.getRange(1, 4).getDisplayValue() || "").trim()) sh.getRange(1, 4).setValue("ชื่อผู้ใช้").setFontWeight("bold");
+      if (!String(sh.getRange(1, 5).getDisplayValue() || "").trim()) sh.getRange(1, 5).setValue("สถานะ").setFontWeight("bold");
       var row = mine ? mine.row : Math.max(sh.getLastRow(), 1) + 1;
-      sh.getRange(row, 1, 1, 4).setValues([[email, name, role, username]]);
+      sh.getRange(row, 1, 1, 5).setValues([[email, name, role, username, newStatus]]);
       created = !mine;
+      if (mine && mine.status !== newStatus) PropertiesService.getScriptProperties().setProperty(plPwMinKey_(email), String(Date.now()));
       if (created) { password = plAuthNewPassword_(); plPwSet_(email, password); }
       else if (mine.role !== role) PropertiesService.getScriptProperties().setProperty(plPwMinKey_(email), String(Date.now()));   // เปลี่ยนบทบาท → ให้เข้าสู่ระบบใหม่
-      appendLog_([{ email: admin.email, action: created ? "เพิ่มผู้ใช้ (Admin)" : "แก้ผู้ใช้ (Admin)", newVal: email + " · " + role + (username ? " · " + username : "") }]);
+      appendLog_([{ email: admin.email, action: created ? "เพิ่มผู้ใช้ (Admin)" : "แก้ผู้ใช้ (Admin)", newVal: email + " · " + role + (username ? " · " + username : "") + (newStatus === "inactive" ? " · ระงับ" : "") }]);
     });
     plClearUsersCache();
-    var out = { ok: true, created: created, user: { email: email, name: name, role: role, username: username, hasPassword: plPwHas_(email) } };
+    var out = { ok: true, created: created, user: { email: email, name: name, role: role, username: username, status: finalStatus, hasPassword: plPwHas_(email) } };
     if (password) out.password = password;
     return out;
   });
@@ -451,5 +459,100 @@ function plAdminResetPassword(tok, email) {
     CacheService.getScriptCache().remove(plAuthKey_("pl_pwf_", em));
     withLock_(function () { appendLog_([{ email: admin.email, action: "รีเซ็ตรหัสผ่านผู้ใช้ (Admin)", newVal: em }]); });
     return { ok: true, email: em, password: password };
+  });
+}
+
+/* ---------------------------------------------------------------------
+ * ตารางสิทธิ์ตามบทบาท (แท็บ "สิทธิ์" ในชีต) — แก้ได้โดยไม่ต้องแก้โค้ด
+ *  แถว = ขั้นตอน (คอลัมน์ A = คีย์ เช่น create / shipDate / plan) · คอลัมน์ C ขึ้นไป = บทบาท
+ *  ช่องที่มี ✓ (หรือ TRUE / x / 1 / yes / ใช่) = บทบาทนั้นกดขั้นนี้ได้ · Admin กดได้ทุกขั้นเสมอ
+ *  ไม่มีแท็บ หรือไม่มีแถวของขั้นนั้น → ใช้ค่าตั้งต้นในโค้ด (PL_ACTIONS)
+ *  ตรวจที่ server ทุกครั้ง · แก้ในชีตแล้วมีผลภายใน ~1 นาที (แก้ผ่านหน้าเว็บมีผลทันที)
+ * ------------------------------------------------------------------- */
+
+var PL_PERM_ROLES = ["AE", "Ops", "Production", "MA", "Installer"];       // Admin ไม่อยู่ในตาราง (ผ่านทุกขั้นเสมอ)
+var PL_PERM_ON = /^(true|✓|✔|x|yes|y|1|ใช่|ได้)$/i;
+
+// แคชแยกตามไฟล์ชีต (โหมดทดสอบใช้สำเนา — ห้ามปนกับของจริง)
+function plPermCacheKey_() { return "pl_perms_v1_" + plAuthSha_(plSpreadsheetId_()).slice(0, 12); }
+function plPermClearCache_() { CacheService.getScriptCache().remove(plPermCacheKey_()); }
+
+// { คีย์ขั้นตอน: [บทบาท...] } จากแท็บสิทธิ์ · ไม่มีแท็บ → null
+function plPermMatrix_() {
+  var cache = CacheService.getScriptCache(), hit = cache.get(plPermCacheKey_());
+  if (hit) return JSON.parse(hit).m;
+  var m = null;
+  try {
+    var sh = plSpreadsheet_().getSheetByName(Config.SHEET_PERMS);
+    if (sh && sh.getLastRow() >= 2 && sh.getLastColumn() >= 3) {
+      var head = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0];
+      var cols = [];
+      head.forEach(function (h, i) { h = String(h || "").trim(); if (i >= 2 && PL_PERM_ROLES.indexOf(h) >= 0) cols.push({ i: i, role: h }); });
+      m = {};
+      sh.getRange(2, 1, sh.getLastRow() - 1, head.length).getDisplayValues().forEach(function (r) {
+        var key = String(r[0] || "").trim();
+        if (!Object.prototype.hasOwnProperty.call(PL_ACTIONS, key)) return;
+        m[key] = cols.filter(function (c) { return PL_PERM_ON.test(String(r[c.i] || "").trim()); }).map(function (c) { return c.role; });
+      });
+    }
+  } catch (e) { m = null; }
+  cache.put(plPermCacheKey_(), JSON.stringify({ m: m }), 60);
+  return m;
+}
+
+function plActionRoles_(key) {
+  var m = plPermMatrix_();
+  return m && m[key] ? m[key].slice() : PL_ACTIONS[key].roles.slice();
+}
+
+// PL_ACTIONS ที่ใส่บทบาทจริงตามตารางสิทธิ์ ส่งให้หน้าจอซ่อน/แสดงปุ่ม (สิทธิ์จริงตรวจที่ server)
+function plEffectiveActions_() {
+  var out = {};
+  Object.keys(PL_ACTIONS).forEach(function (k) {
+    var a = PL_ACTIONS[k];
+    out[k] = { label: a.label, roles: plActionRoles_(k), from: a.from };
+  });
+  return out;
+}
+
+function plAdminPermissions(tok) {
+  return plApi_(function () {
+    plAdminUser_(tok);
+    var m = plPermMatrix_();
+    return {
+      ok: true, roles: PL_PERM_ROLES, source: m ? "sheet" : "default",
+      actions: Object.keys(PL_ACTIONS).map(function (k) { return { key: k, label: PL_ACTIONS[k].label, roles: plActionRoles_(k) }; })
+    };
+  });
+}
+
+// matrix = { คีย์ขั้นตอน: [บทบาท...] } → เขียนแท็บสิทธิ์ (สร้างให้ถ้ายังไม่มี) · มีผลทันที
+function plAdminSavePermissions(tok, matrix) {
+  return plApi_(function () {
+    var admin = plAdminUser_(tok);
+    matrix = matrix || {};
+    var keys = Object.keys(PL_ACTIONS), summary = [];
+    keys.forEach(function (k) {
+      var v = matrix[k];
+      if (Object.prototype.toString.call(v) !== "[object Array]") throw plErr_("INVALID", "ตารางสิทธิ์ไม่ครบ (ขาดขั้นตอน " + k + ")");
+      v.forEach(function (r) { if (PL_PERM_ROLES.indexOf(r) < 0) throw plErr_("INVALID", "บทบาท \"" + r + "\" ไม่อยู่ในตารางสิทธิ์"); });
+    });
+    withLock_(function () {
+      var ss = plSpreadsheet_();
+      var sh = ss.getSheetByName(Config.SHEET_PERMS) || ss.insertSheet(Config.SHEET_PERMS);
+      var rows = [["คีย์", "ขั้นตอน"].concat(PL_PERM_ROLES)];
+      keys.forEach(function (k) {
+        var set = {}; matrix[k].forEach(function (r) { set[r] = 1; });
+        rows.push([k, PL_ACTIONS[k].label].concat(PL_PERM_ROLES.map(function (r) { return set[r] ? "✓" : ""; })));
+        summary.push(k + ":" + matrix[k].join("/"));
+      });
+      var oldLast = sh.getLastRow();
+      if (oldLast > rows.length) sh.getRange(rows.length + 1, 1, oldLast - rows.length, Math.max(sh.getLastColumn(), rows[0].length)).clearContent();
+      sh.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+      sh.getRange(1, 1, 1, rows[0].length).setFontWeight("bold");
+      appendLog_([{ email: admin.email, action: "แก้ตารางสิทธิ์ (Admin)", newVal: summary.join(" · ") }]);
+    });
+    plPermClearCache_();
+    return { ok: true, source: "sheet", actions: keys.map(function (k) { return { key: k, label: PL_ACTIONS[k].label, roles: plActionRoles_(k) }; }) };
   });
 }

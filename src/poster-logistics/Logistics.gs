@@ -12,6 +12,7 @@ var Config = {
   SHEET_TRANSPORT: "Transpot & Supplier",
   SHEET_TEAM: "ความรับผิดชอบทีม",
   SHEET_USERS: "Users",
+  SHEET_PERMS: "สิทธิ์",      // ตารางสิทธิ์: แถว = ขั้นตอน · คอลัมน์ = บทบาท (แก้ในชีตหรือในหน้า จัดการผู้ใช้ ได้)
   SHEET_LOG: "Log",
   HEADER_ROW: 4,          // หัวตารางแถว 4 (นับแบบชีต เริ่ม 1)
   DATA_START_ROW: 5,
@@ -290,6 +291,9 @@ function plLogVal_(v) {
  * สิทธิ์ — ตรวจฝั่ง server เสมอ อ่านจากแท็บ Users (email | ชื่อ | บทบาท)
  * ------------------------------------------------------------------- */
 
+// สถานะบัญชีในแท็บ Users คอลัมน์ E: ว่าง/active = ใช้งาน · inactive/ระงับ/suspended/disabled/off/no = ระงับ (เหมือนไม่อยู่ในรายชื่อ)
+function plIsInactive_(v) { return /^(inactive|ระงับ|suspended|disabled|off|no|false|0)$/i.test(String(v == null ? "" : v).trim()); }
+
 function plUsers_() {
   var cache = CacheService.getScriptCache();
   var hit = cache.get("pl_users_v1");
@@ -298,10 +302,10 @@ function plUsers_() {
   var last = sh.getLastRow();
   var out = {};
   if (last >= 2) {
-    sh.getRange(2, 1, last - 1, 3).getDisplayValues().forEach(function (r) {
+    sh.getRange(2, 1, last - 1, 5).getDisplayValues().forEach(function (r) {
       var email = String(r[0] || "").trim().toLowerCase();
       var role = String(r[2] || "").trim();
-      if (!email || Config.ROLES.indexOf(role) < 0) return;
+      if (!email || Config.ROLES.indexOf(role) < 0 || plIsInactive_(r[4])) return;
       out[email] = { name: String(r[1] || "").trim(), role: role };
     });
   }

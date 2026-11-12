@@ -122,6 +122,13 @@
   .plx-urow .btns { display:flex; gap:6px; flex-wrap:wrap; }
   .plx-urow .btns .plx-btn { min-height:32px; padding:0 10px; font-size:12px; }
   .plx-role { border-radius:99px; background:var(--accent-soft); color:var(--accent-strong); padding:2px 9px; font-size:12px; font-weight:600; }
+  .plx-role.off { background:#fdecea; color:#a12a1d; }
+  .plx-permwrap { overflow-x:auto; border:1px solid var(--border); border-radius:12px; }
+  .plx-perm { border-collapse:collapse; width:100%; font-size:13px; min-width:420px; }
+  .plx-perm th, .plx-perm td { padding:7px 8px; border-top:1px solid var(--border); text-align:center; }
+  .plx-perm thead th { border-top:0; background:var(--card-hover); font-size:12px; }
+  .plx-perm th:first-child, .plx-perm td:first-child { text-align:left; }
+  .plx-perm input[type=checkbox] { width:20px; height:20px; accent-color:var(--accent); }
   .plx-pwbox { background:#fff8e1; border:1px solid #e8b45c; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:6px; }
   .plx-pwbox code { font-size:22px; font-weight:700; letter-spacing:2px; user-select:all; }
   .plx-mbox input[type=text], .plx-mbox input[type=password], .plx-mbox input[type=email], .plx-mbox select { width:100%; min-height:40px; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font:inherit; font-size:14px; background:#fff; color:var(--ink); }
@@ -462,13 +469,14 @@
     authCall("plAdminUsers", [tok], function (r) {
       if (r && r.code === "LOGIN_REQUIRED") { closeModal(); requireLogin("กรุณาเข้าสู่ระบบใหม่"); return; }
       if (!r || !r.ok) { box.innerHTML = mhead("👥 จัดการผู้ใช้") + '<div class="plx-msg err">' + esc((r && r.message) || "โหลดไม่สำเร็จ") + "</div>"; $('[data-m="close"]', box).addEventListener("click", closeModal); return; }
-      usersState = r; drawUsers(box, null, "");
+      usersState = r;
+      authCall("plAdminPermissions", [tok], function (pr) { usersState.perms = pr && pr.ok ? pr : null; drawUsers(box, null, ""); });
     });
   }
   function drawUsers(box, edit, resultHtml) {
-    var U = usersState, e = edit || { email: "", name: "", role: "AE", username: "" };
+    var U = usersState, e = edit || { email: "", name: "", role: "AE", username: "", status: "active" };
     var rows = U.users.map(function (u, i) {
-      return '<div class="plx-urow"><div class="who"><b>' + esc(u.name || u.email) + ' <span class="plx-role">' + esc(u.role || "ไม่มีบทบาท") + "</span></b><span>" + esc(u.email) + (u.username ? " · ชื่อผู้ใช้ " + esc(u.username) : "") + " · " + (u.hasPassword ? "มีรหัสผ่าน" : "ยังไม่มีรหัสผ่าน") + '</span></div>' +
+      return '<div class="plx-urow"><div class="who"><b>' + esc(u.name || u.email) + ' <span class="plx-role">' + esc(u.role || "ไม่มีบทบาท") + "</span>" + (u.status === "inactive" ? ' <span class="plx-role off">ระงับ</span>' : "") + "</b><span>" + esc(u.email) + (u.username ? " · ชื่อผู้ใช้ " + esc(u.username) : "") + " · " + (u.hasPassword ? "มีรหัสผ่าน" : "ยังไม่มีรหัสผ่าน") + '</span></div>' +
         '<div class="btns"><button type="button" class="plx-btn" data-u="edit" data-i="' + i + '">แก้ไข</button><button type="button" class="plx-btn warn" data-u="reset" data-i="' + i + '">' + (u.hasPassword ? "รีเซ็ตรหัสผ่าน" : "สร้างรหัสผ่าน") + "</button></div></div>";
     }).join("");
     box.innerHTML = mhead("👥 จัดการผู้ใช้") + (resultHtml || "") +
@@ -478,8 +486,9 @@
       field("ชื่อ", '<input type="text" name="name" autocomplete="off" value="' + esc(e.name) + '">') +
       '<div class="plx-row2">' + field("บทบาท", '<select name="role">' + U.roles.map(function (r) { return "<option" + (r === e.role ? " selected" : "") + ">" + esc(r) + "</option>"; }).join("") + "</select>", true) +
       field("ชื่อผู้ใช้ (a-z 0-9 . _ -)", '<input type="text" name="username" autocomplete="off" autocapitalize="none" value="' + esc(e.username) + '">') + "</div>" +
+      field("สถานะบัญชี", '<select name="status"><option value="active"' + (e.status !== "inactive" ? " selected" : "") + '>ใช้งาน</option><option value="inactive"' + (e.status === "inactive" ? " selected" : "") + ">ระงับ (เข้าสู่ระบบไม่ได้)</option></select>") +
       '<div class="plx-mmsg"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="submit" class="plx-btn pri">' + (e.email ? "บันทึก" : "เพิ่มผู้ใช้") + "</button>" +
-      (e.email ? '<button type="button" class="plx-btn" data-u="new">ยกเลิกการแก้ไข</button>' : "") + "</div></form>";
+      (e.email ? '<button type="button" class="plx-btn" data-u="new">ยกเลิกการแก้ไข</button>' : "") + "</div></form>" + permHtml(U);
     $('[data-m="close"]', box).addEventListener("click", closeModal);
     $$('[data-u="edit"]', box).forEach(function (b) { b.addEventListener("click", function () { drawUsers(box, U.users[+b.getAttribute("data-i")], ""); }); });
     $$('[data-u="reset"]', box).forEach(function (b) {
@@ -493,18 +502,53 @@
         });
       });
     });
+    bindPerms(box, U);
     var nw = $('[data-u="new"]', box); if (nw) nw.addEventListener("click", function () { drawUsers(box, null, ""); });
     var f = $("form", box);
     f.addEventListener("submit", function (ev) {
       ev.preventDefault();
       var btn = $('button[type="submit"]', f); btn.disabled = true;
-      authCall("plAdminSaveUser", [tok, { email: f.email.value, name: f.name.value, role: f.role.value, username: f.username.value }], function (r) {
+      authCall("plAdminSaveUser", [tok, { email: f.email.value, name: f.name.value, role: f.role.value, username: f.username.value, status: f.status.value }], function (r) {
         btn.disabled = false;
         if (!r || !r.ok) { mmsg(box, "err", esc((r && r.message) || "บันทึกไม่สำเร็จ")); return; }
         var u = r.user, found = false;
         U.users = U.users.map(function (x) { if (x.email === u.email) { found = true; return u; } return x; });
         if (!found) U.users.push(u);
         drawUsers(box, null, r.password ? pwResult(u.name || u.email, u.email, r.password) : '<div class="plx-msg ok">บันทึกแล้ว ✔</div>');
+      });
+    });
+  }
+  function permHtml(U) {
+    var P = U.perms;
+    if (!P) return "";
+    var head = "<tr><th>ขั้นตอน</th>" + P.roles.map(function (r) { return "<th>" + esc(r) + "</th>"; }).join("") + "</tr>";
+    var rows = P.actions.map(function (a) {
+      return "<tr><td>" + esc(a.label) + "</td>" + P.roles.map(function (r) {
+        return '<td><input type="checkbox" data-k="' + esc(a.key) + '" data-r="' + esc(r) + '"' + (a.roles.indexOf(r) >= 0 ? " checked" : "") + ' aria-label="' + esc(a.label + " · " + r) + '"></td>';
+      }).join("") + "</tr>";
+    }).join("");
+    return '<details class="plx-permd" style="border-top:1px solid var(--border);padding-top:12px"' + (U.permOpen ? " open" : "") + '><summary style="cursor:pointer;font-weight:700">สิทธิ์ของแต่ละบทบาท (ใครกดขั้นไหนได้)</summary>' +
+      '<div class="plx-act" style="margin-top:10px"><div class="plx-sub">ติ๊กช่องที่บทบาทนั้นกดขั้นตอนได้ · Admin กดได้ทุกขั้นเสมอ · บันทึกแล้วมีผลทันที · ' + (P.source === "sheet" ? "ตารางนี้เก็บในแท็บ “สิทธิ์” ของชีต" : "ตอนนี้ใช้ค่าตั้งต้น (บันทึกแล้วจะสร้างแท็บ “สิทธิ์” ในชีต)") + '</div>' +
+      '<div class="plx-permwrap"><table class="plx-perm"><thead>' + head + "</thead><tbody>" + rows + '</tbody></table></div>' +
+      '<div class="plx-mmsg plx-pmsg"></div><div><button type="button" class="plx-btn pri" data-p="save">บันทึกตารางสิทธิ์</button></div></div></details>';
+  }
+  function bindPerms(box, U) {
+    var d = $(".plx-permd", box);
+    if (!d) return;
+    d.addEventListener("toggle", function () { U.permOpen = d.open; });
+    $('[data-p="save"]', box).addEventListener("click", function () {
+      var m = {};
+      U.perms.actions.forEach(function (a) { m[a.key] = []; });
+      $$('input[type=checkbox][data-k]', d).forEach(function (c) { if (c.checked) m[c.getAttribute("data-k")].push(c.getAttribute("data-r")); });
+      var b = this; b.disabled = true;
+      authCall("plAdminSavePermissions", [tok, m], function (r) {
+        b.disabled = false;
+        var out = $(".plx-pmsg", d);
+        if (r && r.ok) {
+          U.perms.actions = r.actions; U.perms.source = "sheet";
+          out.innerHTML = '<div class="plx-msg ok">บันทึกตารางสิทธิ์แล้ว ✔ (มีผลทันที — ให้คนอื่นรีเฟรชหน้าจอเพื่อเห็นปุ่มใหม่)</div>';
+          refresh();
+        } else out.innerHTML = '<div class="plx-msg err">' + esc((r && r.message) || "บันทึกไม่สำเร็จ") + "</div>";
       });
     });
   }
