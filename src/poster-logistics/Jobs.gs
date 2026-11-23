@@ -89,7 +89,7 @@ function plLocate_(ctx, rowKey) {
     }
   });
   if (hits.length === 1) return hits[0];
-  if (!hits.length) throw plErr_("NOT_FOUND", "ไม่พบป้าย " + sign + " เดือน " + rowKey.month + " ในชีตแล้ว (อาจถูกลบหรือแก้รหัส)");
+  if (!hits.length) throw plErr_("NOT_FOUND", "ไม่พบป้าย " + sign + " เดือน " + rowKey.month + " ในชีตแล้ว (อาจถูกลบ หรือแก้รหัสป้าย / Year / Month) กรุณารีเฟรช");
   // ป้ายเดียวกันเดือนเดียวกันมีหลายแถว: ใช้แถวที่ใกล้ตำแหน่งเดิมที่สุดไม่ได้ เพราะอาจเขียนผิดงาน
   throw plErr_("AMBIGUOUS", "ป้าย " + sign + " เดือน " + rowKey.month + " มี " + hits.length + " แถว (แถว " +
     hits.map(function (h) { return h.row; }).join(", ") + ") กรุณารีเฟรชแล้วเลือกใหม่");
@@ -144,14 +144,16 @@ function plSuggestTeam_(ctx, sign, iata, beforeRow) {
 }
 
 // วันแนะนำตอนสร้างงาน: ติดตั้ง = Ad on − 1 · ส่ง = ติดตั้ง − buffer · ที่ส่ง = จุดรับของ default
+//   ถ้าวันที่ได้ตรงเสาร์/อาทิตย์/วันหยุด (Config.HOLIDAYS) → ถอยไปวันทำการก่อนหน้า
+//   ถอยหลังเท่านั้น: ติดตั้งยังอยู่ก่อน Ad on และช่วงส่ง→ติดตั้งไม่น้อยกว่า buffer เสมอ
 function plSuggest_(ctx, job) {
   var t = plTransportMap_()[job.iata] || {};
   var buffer = t.buffer != null ? t.buffer : Config.DEFAULT_BUFFER_DAYS;
-  var install = job.adOn ? plAddDays_(job.adOn, -1) : null;
+  var install = job.adOn ? plPrevWorkday_(plAddDays_(job.adOn, -1)) : null;
   return {
     buffer: buffer,
     installDate: install ? plDateKey_(install) : "",
-    shipDate: install ? plDateKey_(plAddDays_(install, -buffer)) : "",
+    shipDate: install ? plDateKey_(plPrevWorkday_(plAddDays_(install, -buffer))) : "",
     shipTo: t.shipTo || "",
     receiver: [t.receiver, t.phone].filter(String).join(" "),
     team: plSuggestTeam_(ctx, job.sign, job.iata, job.row)
@@ -209,9 +211,7 @@ function plMutate_(user, rowKey, ver, spec) {
     var ctx = plJobsCtx_();
     var loc = plLocate_(ctx, rowKey);
     var job = plRowToJob_(ctx, loc.values, loc.row);
-    if (job.monthKey < Config.GO_LIVE_MONTH) {
-      throw plErr_("OLD_ROW", "งานเดือน " + job.monthKey + " เก่ากว่าเดือนที่เริ่มใช้ระบบ (" + Config.GO_LIVE_MONTH + ") ระบบไม่แก้แถวนี้");
-    }
+    plCheckLiveMonth_(job);
     if (spec.from.indexOf(job.status) < 0) {
       throw plErr_("BAD_STATE", "ทำ \"" + spec.action + "\" ไม่ได้ เพราะสถานะตอนนี้คือ \"" + (job.status || "ยังไม่สร้างงาน") + "\"", { job: job });
     }
@@ -242,14 +242,14 @@ function plMutate_(user, rowKey, ver, spec) {
       }
       writes[c] = newV;
       if (f !== "updatedBy" && f !== "updatedAt") {
-        logs.push({ email: user.email, row: loc.row, sign: job.sign, col: PL_F[f].replace(/#\d+$/, ""), oldVal: oldV, newVal: newV, action: spec.action });
+        logs.push({ email: user.email, row: loc.row, sign: job.sign, month: job.monthKey, col: PL_F[f].replace(/#\d+$/, ""), oldVal: oldV, newVal: newV, action: spec.action });
       }
     });
-    plWriteRow_(ctx.sheet, loc.row, loc.values, writes, plSystemZone_(ctx));
-    if (!logs.length) logs.push({ email: user.email, row: loc.row, sign: job.sign, action: spec.action, newVal: "(ไม่มีค่าเปลี่ยน)" });
+    plWriteRow_(ctx.sheet, loc.row, loc.values, writes, plSystemZone_(ctx), plTextCols_(ctx));
+    if (!logs.length) logs.push({ email: user.email, row: loc.row, sign: job.sign, month: job.monthKey, action: spec.action, newVal: "(ไม่มีค่าเปลี่ยน)" });
     if (res.logNote) logs[0].action = spec.action + " · " + res.logNote;
     appendLog_(logs);
-    try { if (typeof clearDashboardCache === "function") clearDashboardCache(Config.SHEET_JOBS); } catch (e) { }
+    try { if (typeof clearDashboardCache_ === "function") clearDashboardCache_(Config.SHEET_JOBS); } catch (e) { }
     var fresh = plRowToJob_(ctx, loc.values, loc.row);          // loc.values ถูกอัปเดตตามที่เขียนแล้ว ไม่ต้องอ่านซ้ำ
     return { ok: true, job: fresh, warnings: res.warnings || [] };
   });
@@ -257,7 +257,11 @@ function plMutate_(user, rowKey, ver, spec) {
 
 // เขียนเฉพาะคอลัมน์ที่เปลี่ยน โดยรวมคอลัมน์ที่ติดกันเป็นช่วงเดียว (เช่น AQ–BC) ลดจำนวนครั้งที่เรียกชีต
 // คอลัมน์ที่อยู่ระหว่างช่วงแต่ไม่ได้เปลี่ยน จะเขียนค่าเดิมกลับ (ห้ามใช้กับคอลัมน์สูตร — AQ–BC และ B/AH–AM ไม่มีสูตร)
-function plWriteRow_(sheet, rowNum, values, writes, zone) {
+// textCols (ไม่บังคับ) = { เลขคอลัมน์ 0-based: 1 } ที่ต้องเป็นข้อความล้วน → ตั้งรูปแบบ "@" ก่อนเขียนทุกครั้ง
+//   setupSheets ตั้ง "@" ไว้แค่ถึงแถวสุดท้ายที่มีตอนรัน แถวที่เพิ่มทีหลังอาจไม่มี แล้วชีตจะแปลง
+//   token "แก้ล่าสุดเมื่อ" (yyyy-MM-dd HH:mm:ss.SSS) เป็นวันที่ → ver ที่ส่งกลับไม่ตรงกับในชีต → CONFLICT
+function plWriteRow_(sheet, rowNum, values, writes, zone, textCols) {
+  textCols = textCols || {};
   var cols = Object.keys(writes).map(Number).sort(function (a, b) { return a - b; });
   var i = 0;
   while (i < cols.length) {
@@ -268,15 +272,43 @@ function plWriteRow_(sheet, rowNum, values, writes, zone) {
       if (c in writes) values[c] = writes[c];
       arr.push(values[c]);
     }
+    // คอลัมน์ข้อความในช่วงนี้ ตั้ง "@" เป็นก้อนต่อเนื่อง (ปกติทั้งโซน AQ–BC = 1 ครั้ง)
+    for (var t = start; t <= end; t++) {
+      if (!textCols[t]) continue;
+      var t2 = t;
+      while (t2 + 1 <= end && textCols[t2 + 1]) t2++;
+      sheet.getRange(rowNum, t + 1, 1, t2 - t + 1).setNumberFormat("@");
+      t = t2;
+    }
     sheet.getRange(rowNum, start + 1, 1, arr.length).setValues([arr]);
     i++;
   }
+}
+
+// คอลัมน์ใหม่ที่ระบบดูแล (สถานะงาน … แก้ล่าสุดเมื่อ) เป็นข้อความล้วนทั้งหมด → { เลขคอลัมน์ 0-based: 1 }
+var PL_TEXT_FIELDS = ["status", "confirmedBy", "confirmedAt", "reason", "shippedAt", "tracking", "receivedAt",
+  "condition", "installedAt", "photos", "proofAt", "updatedBy", "updatedAt"];
+function plTextCols_(ctx) {
+  var out = {};
+  PL_TEXT_FIELDS.forEach(function (f) { if (ctx.col[f] >= 0) out[ctx.col[f]] = 1; });
+  return out;
 }
 
 // โซนคอลัมน์ที่ระบบดูแลเอง (สถานะงาน … แก้ล่าสุดเมื่อ = AQ–BC) รวมเป็นช่วงเดียวได้แม้มีคอลัมน์ไม่เปลี่ยนคั่น
 function plSystemZone_(ctx) {
   var a = ctx.col.status, b = ctx.col.updatedAt;
   return a >= 0 && b > a && b - a === (plValues_(Config.NEW_JOB_COLS).length - 1) ? [a, b] : [a, a];
+}
+
+// แถวต้องมีเดือนที่อ่านได้ และไม่เก่ากว่าเดือนที่เริ่มใช้ระบบ
+//   แยกกรณี Year/Month ว่างหรืออ่านไม่ได้ ออกจาก "เดือนเก่า" — เดิมข้อความออกมาเป็น "งานเดือน  เก่ากว่า…"
+function plCheckLiveMonth_(job) {
+  if (!job.monthKey) {
+    throw plErr_("INVALID", "แถว " + job.row + " (ป้าย " + (job.sign || "–") + ") ไม่มี Year / Month ที่ระบบอ่านได้ ระบบไม่แก้แถวนี้");
+  }
+  if (job.monthKey < Config.GO_LIVE_MONTH) {
+    throw plErr_("OLD_ROW", "งานเดือน " + job.monthKey + " เก่ากว่าเดือนที่เริ่มใช้ระบบ (" + Config.GO_LIVE_MONTH + ") ระบบไม่แก้แถวนี้");
+  }
 }
 
 function plNowText_() { return Utilities.formatDate(new Date(), Config.TZ, "d-MMM-yyyy HH:mm"); }
@@ -303,7 +335,7 @@ var PL_ACTIONS = {
   shipped:     { label: "ส่งแล้ว", roles: ["Ops", "Production"], from: [PL_S.SCHEDULED, PL_S.RESHIP] },
   received:    { label: "ได้รับของแล้ว", roles: ["Ops", "MA"], from: [PL_S.SHIPPED] },
   installed:   { label: "ติดตั้งแล้ว", roles: ["Installer", "Ops", "MA"], from: [PL_S.RECEIVED] },
-  proofSent:   { label: "ส่ง Proof แล้ว", roles: ["AE"], from: [PL_S.ON_AIR] }
+  proofSent:   { label: "ส่ง Report แล้ว", roles: ["AE"], from: [PL_S.ON_AIR] }
 };
 // สถานะที่กำหนดการครบแล้ว (มีทั้งวันส่งและแผนติดตั้ง) — แก้หลังจากนี้ต้องใส่เหตุผล
 var PL_SETTLED = [PL_S.SCHEDULED, PL_S.WAIT_AE, PL_S.RESHIP];
@@ -319,11 +351,33 @@ function plCreateJob_(user, rowKey, payload, ver) {
   var r = plMutate_(user, rowKey, ver, plAct_("create", {
     apply: function (job) {
       var ad = plNeedDate_(payload.adOn || job.adOn, "วัน Ad on ");
-      return { changes: { adOn: ad, status: PL_S.WAIT_SHIP } };
+      return { changes: { adOn: ad, status: PL_S.WAIT_SHIP }, warnings: plAdOnWarnings_(ad, job.monthKey) };
     }
   }));
-  if (r.ok) r.suggest = plSuggest_(plJobsCtx_(), r.job);
+  // ค่าแนะนำคำนวณหลังเขียนชีตแล้ว: ถ้าพลาด ห้ามทำให้ผลเป็น "บันทึกไม่สำเร็จ" เพราะงานถูกสร้างไปแล้ว
+  if (r.ok) {
+    try {
+      r.suggest = plSuggest_(plJobsCtx_(), r.job);
+    } catch (e) {
+      console.error(e && e.stack ? e.stack : e);
+      r.suggest = null;
+      r.warnings = (r.warnings || []).concat(["สร้างงานแล้ว แต่คำนวณค่าแนะนำวันส่ง/วันติดตั้งไม่สำเร็จ"]);
+    }
+  }
   return r;
+}
+
+// เตือน (ไม่ห้าม) เมื่อวัน Ad on ดูผิดปกติ: ผ่านมาแล้ว หรือห่างจากเดือนของแถวเกิน 1 เดือน (มักเป็นปี/เดือนพิมพ์ผิด)
+function plAdOnWarnings_(ad, monthKey) {
+  var out = [], adKey = plDateKey_(ad);
+  if (!adKey) return out;
+  if (adKey < plDateKey_(new Date())) out.push("วัน Ad on " + formatDate_(ad) + " ผ่านมาแล้ว ค่าแนะนำวันส่ง/ติดตั้งจะอยู่ในอดีต");
+  var m = /^(\d{4})-(\d{2})$/.exec(monthKey || "");
+  if (m) {
+    var diff = (ad.getFullYear() * 12 + ad.getMonth()) - (+m[1] * 12 + (+m[2] - 1));
+    if (Math.abs(diff) > 1) out.push("วัน Ad on " + formatDate_(ad) + " ห่างจากเดือนของแถว (" + monthKey + ") เกิน 1 เดือน กรุณาตรวจปี/เดือน");
+  }
+  return out;
 }
 
 // AE แก้วัน Ad on (ก่อน On air) · หลังกำหนดการครบแล้วต้องมีเหตุผล · ถ้าวันติดตั้งเลย Ad on ใหม่ → "รอ AE รับทราบ"
@@ -417,7 +471,9 @@ function plMarkShipped_(user, rowKey, payload, ver) {
     apply: function (job) {
       var tracking = plStr_(payload.tracking);
       if (!tracking) throw plErr_("INVALID", "กรุณาใส่ขนส่ง / เลขพัสดุ");
-      return { changes: { status: PL_S.SHIPPED, shippedAt: plNowText_(), tracking: tracking }, logNote: plStr_(payload.note) };
+      var ch = { status: PL_S.SHIPPED, shippedAt: plNowText_(), tracking: tracking };
+      if (payload.photoUrls && payload.photoUrls.length) ch.photos = plJoinPhotos_(job.photoList, payload.photoUrls);
+      return { changes: ch, logNote: plStr_(payload.note) };
     }
   }));
 }
@@ -464,10 +520,17 @@ function plMarkInstalled_(user, rowKey, payload, ver) {
   }));
 }
 
-// AE ส่ง Proof แล้ว (หลัง On air) → ปิดงาน
-function plMarkProofSent_(user, rowKey, ver) {
+// AE ส่ง Report แล้ว (หลัง On air) → ปิดงาน · payload.photoUrls = รูป Report ที่อัปโหลดแล้ว (ถ้ามี) ต่อท้ายคอลัมน์รูป
+//   ลำดับค่า (rowKey, ver, payload) — payload ต่อท้ายเพื่อให้หน้าเว็บรุ่นเดิมที่ส่งแค่ (rowKey, ver) ยังใช้ได้
+function plMarkProofSent_(user, rowKey, ver, payload) {
+  payload = payload || {};
   return plMutate_(user, rowKey, ver, plAct_("proofSent", {
-    apply: function () { return { changes: { status: PL_S.CLOSED, proofAt: plNowText_() } }; }
+    apply: function (job) {
+      var ch = { status: PL_S.CLOSED, proofAt: plNowText_() };
+      var n = (payload.photoUrls || []).length;
+      if (n) ch.photos = plJoinPhotos_(job.photoList, payload.photoUrls);
+      return { changes: ch, logNote: n ? "แนบรูป Report " + n + " รูป" : "" };
+    }
   }));
 }
 
@@ -508,7 +571,7 @@ function plListPosterJobs_(user, filters) {
     if (q && (job.sign + " " + job.customer + " " + job.airport).toLowerCase().indexOf(q) < 0) return;
     var buf = (tmap[job.iata] || {}).buffer;
     job.check = plEvaluate_(job, buf != null ? buf : Config.DEFAULT_BUFFER_DAYS);
-    job.createdAt = created[job.row + "|" + job.sign] || "";
+    job.createdAt = created["m|" + job.sign + "|" + job.monthKey] || created[job.row + "|" + job.sign] || "";
     job.slaOverdue = job.status === PL_S.WAIT_SHIP && !!job.createdAt &&
       plDateKey_(plAddWorkdays_(job.createdAt, Config.SLA_WORKDAYS)) < today;
     job.week = plWeekKey_(job.installDate || job.adOn);
@@ -527,6 +590,7 @@ function plListPosterJobs_(user, filters) {
   });
   return {
     ok: true, me: { email: user.email, name: user.name, role: user.role, via: user.via || "" },
+    pendingSignups: user.role === "Admin" ? plSignupCount_() : 0,     // จำนวนคำขอสมัครรออนุมัติ (Auth.gs) — แสดงบนปุ่ม 👥 ของ Admin
     testMode: plIsTestMode_(), actions: plEffectiveActions_(), status: Config.STATUS, teams: Config.INSTALL_TEAMS,
     conditions: Config.CONDITIONS, goLive: Config.GO_LIVE_MONTH,
     jobs: jobs, groups: order.map(function (k) { return groups[k]; }),
@@ -542,15 +606,69 @@ function plWeekKey_(v) {
   return plDateKey_(new Date(d.getFullYear(), d.getMonth(), d.getDate() - back, 12));
 }
 
-// เวลาที่ AE สร้างงาน อ่านจาก Log (ใช้คิด SLA ของ Ops) → { "แถว|ป้าย": "yyyy-MM-dd HH:mm:ss" }
+// เวลาที่ AE สร้างงาน อ่านจาก Log (ใช้คิด SLA ของขั้น "รอกำหนดวันส่ง" ซึ่งเป็นงานของ Admin)
+//   → { "m|ป้าย|เดือน": เวลา } สำหรับ Log ที่มีคอลัมน์เดือนงาน (ไม่หายเมื่อแถวเลื่อน)
+//     และ { "แถว|ป้าย": เวลา } สำหรับ Log เก่าที่ยังไม่มีเดือนงาน
+//   ไม่อ่าน Log ทั้งแท็บทุกครั้ง: เก็บผลไว้ใน CacheService พร้อมเลขแถวสุดท้ายที่อ่านแล้ว
+//   รอบถัดไปอ่านเฉพาะแถวที่เพิ่มต่อท้าย · ถ้า Log ถูกลบ/แก้ (แถวสุดท้ายที่จำไว้หายหรือเวลาไม่ตรง) → อ่านใหม่ทั้งแท็บ
+var PL_CREATED_CACHE_SEC = 21600;                 // 6 ชม. (สูงสุดของ CacheService)
+var PL_CREATED_CACHE_MAX = 95000;                 // ต่อ key ได้ไม่เกิน 100KB · ใหญ่กว่านี้ไม่เก็บ (อ่านทั้งแท็บแบบเดิม)
 function plCreatedAt_() {
   var sh = plSheet_(Config.SHEET_LOG);
   var last = sh.getLastRow();
-  var out = {};
-  if (last < 2) return out;
-  sh.getRange(2, 1, last - 1, 8).getDisplayValues().forEach(function (r) {
-    if (r[7].indexOf("สร้างงาน") === 0 && !out[r[2] + "|" + r[3]]) out[r[2] + "|" + r[3]] = r[0];
+  if (last < 2) return {};
+  var cache = CacheService.getScriptCache();
+  var ckey = "pl_created_v1_" + plSpreadsheetId_();      // แยกตามไฟล์ชีต (โหมดทดสอบใช้สำเนา ห้ามปนกับของจริง)
+  var st = null;
+  try { st = JSON.parse(cache.get(ckey) || "null"); } catch (e) { st = null; }
+  // ตรวจว่าแถวสุดท้ายที่จำไว้ยังเป็นแถวเดิม (เวลาในคอลัมน์ A ตรงกัน) — ไม่ตรง = Log ถูกลบ/แทรก/แก้ → เริ่มใหม่
+  if (!st || !st.map || !(st.row >= 1) || st.row > last ||
+    (st.row >= 2 && sh.getRange(st.row, 1).getDisplayValue() !== st.ts)) {
+    st = { row: 1, ts: "", map: {} };
+  }
+  if (last > st.row) {
+    plReadLogRange_(sh, st.row + 1, last).forEach(function (r) {
+      if (r[7].indexOf(PL_ACTIONS.create.label) !== 0) return;
+      var k = r[8] ? "m|" + r[3] + "|" + r[8] : r[2] + "|" + r[3];
+      if (!st.map[k]) st.map[k] = r[0];                     // เก็บครั้งแรก (อ่านจากบนลงล่าง = เก่าสุดก่อน)
+    });
+    st.row = last;
+    st.ts = sh.getRange(last, 1).getDisplayValue();
+    try {
+      var json = JSON.stringify(st);
+      if (json.length <= PL_CREATED_CACHE_MAX) cache.put(ckey, json, PL_CREATED_CACHE_SEC);
+      else cache.remove(ckey);
+    } catch (e2) { }
+  }
+  return st.map;
+}
+
+// อ่าน Log แถว from..to เป็นข้อความ · คอลัมน์ที่ 9 = เดือนงาน (Log เก่าที่ยังไม่มีคอลัมน์นี้ได้ "")
+function plReadLogRange_(sh, from, to) {
+  var W = Config.LOG_HEADERS.length + 1;
+  if (to < from) return [];
+  var w = Math.min(W, sh.getLastColumn());
+  return sh.getRange(from, 1, to - from + 1, w).getDisplayValues().map(function (r) {
+    while (r.length < W) r.push("");
+    return r;
   });
+}
+
+// แถวใน Log ของป้ายนี้เท่านั้น: ใช้ TextFinder หาในคอลัมน์ "ตำแหน่งป้าย" (ฝั่ง Google ค้นให้ ไม่ต้องโหลดทั้งแท็บ)
+//   แล้วอ่านเฉพาะช่วงแถวที่เจอ โดยรวมแถวที่อยู่ใกล้กัน (ห่างไม่เกิน PL_LOG_GAP) เป็นการอ่านครั้งเดียว
+var PL_LOG_GAP = 30;
+function plLogRowsForSign_(sh, sign) {
+  var last = sh.getLastRow();
+  if (last < 2 || !sign) return [];
+  var found = sh.getRange(2, 4, last - 1, 1).createTextFinder(sign).matchEntireCell(true).matchCase(true).findAll();
+  var rows = found.map(function (r) { return r.getRow(); }).sort(function (a, b) { return a - b; });
+  var out = [], i = 0;
+  while (i < rows.length) {
+    var a = rows[i], b = a;
+    while (i + 1 < rows.length && rows[i + 1] - b <= PL_LOG_GAP) { i++; b = rows[i]; }
+    plReadLogRange_(sh, a, b).forEach(function (r) { if (r[3] === sign) out.push(r); });
+    i++;
+  }
   return out;
 }
 
@@ -560,16 +678,13 @@ function plGetJob_(user, rowKey) {
   var job = plRowToJob_(ctx, loc.values, loc.row);
   var buf = (plTransportMap_()[job.iata] || {}).buffer;
   job.check = plEvaluate_(job, buf != null ? buf : Config.DEFAULT_BUFFER_DAYS);
-  var sh = plSheet_(Config.SHEET_LOG);
-  var last = sh.getLastRow();
   var history = [];
-  if (last >= 2) {
-    sh.getRange(2, 1, last - 1, 8).getDisplayValues().forEach(function (r) {
-      if (String(r[2]) === String(loc.row) && r[3] === job.sign) {
-        history.push({ at: r[0], email: r[1], col: r[4], oldVal: r[5], newVal: r[6], action: r[7] });
-      }
-    });
-  }
+  // อ่านเฉพาะแถว Log ของป้ายนี้ · Log ที่มีเดือนงาน: จับด้วยป้าย + เดือน (ไม่หายเมื่อแถวเลื่อน) · Log เก่า: จับด้วยแถว + ป้าย แบบเดิม
+  plLogRowsForSign_(plSheet_(Config.SHEET_LOG), job.sign).forEach(function (r) {
+    if (r[8] ? r[8] === job.monthKey : String(r[2]) === String(loc.row)) {
+      history.push({ at: r[0], email: r[1], col: r[4], oldVal: r[5], newVal: r[6], action: r[7] });
+    }
+  });
   return { ok: true, job: job, history: history.reverse(), suggest: plSuggest_(ctx, job), ver: job.ver };
 }
 
@@ -582,7 +697,10 @@ var PL_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 var PL_PHOTO_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
 function plUploadJobPhoto_(user, rowKey, file) {
-  requireRole_(user, ["Installer", "Ops", "MA"]);
+  // ใครกดขั้นที่แนบรูปได้ (ส่งของ / รับของ / ติดตั้ง / ส่ง Report ตามตารางสิทธิ์) ก็อัปโหลดรูปได้
+  var upRoles = [];
+  ["shipped", "received", "installed", "proofSent"].forEach(function (k) { plActionRoles_(k).forEach(function (r) { if (upRoles.indexOf(r) < 0) upRoles.push(r); }); });
+  requireRole_(user, upRoles);
   file = file || {};
   var m = String(file.dataUrl || "").match(/^data:([\w\/+.-]+);base64,([A-Za-z0-9+\/=\s]+)$/);
   if (!m) throw plErr_("INVALID", "ไฟล์รูปไม่ถูกต้อง");
@@ -596,7 +714,7 @@ function plUploadJobPhoto_(user, rowKey, file) {
   var ctx = plJobsCtx_();
   var loc = plLocate_(ctx, rowKey);
   var job = plRowToJob_(ctx, loc.values, loc.row);
-  if (job.monthKey < Config.GO_LIVE_MONTH) throw plErr_("OLD_ROW", "งานเดือนเก่ากว่าที่เริ่มใช้ระบบ");
+  plCheckLiveMonth_(job);
   var folder = withLock_(function () {
     var root = DriveApp.getFolderById(rootId);
     var it = root.getFoldersByName(job.sign);
@@ -641,4 +759,4 @@ function markShipped(rowKey, payload, ver) { return plCall("", "markShipped", [r
 function markReceived(rowKey, payload, ver) { return plCall("", "markReceived", [rowKey, payload, ver]); }
 function markInstalled(rowKey, payload, ver) { return plCall("", "markInstalled", [rowKey, payload, ver]); }
 function uploadJobPhoto(rowKey, file) { return plCall("", "uploadJobPhoto", [rowKey, file]); }
-function markProofSent(rowKey, ver) { return plCall("", "markProofSent", [rowKey, ver]); }
+function markProofSent(rowKey, ver, payload) { return plCall("", "markProofSent", [rowKey, ver, payload]); }

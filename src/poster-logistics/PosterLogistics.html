@@ -1,5 +1,5 @@
 <!-- =====================================================================
- Poster Logistics — เฟส ค: หน้าจอ (ฝังในแท็บ 🛠️ Poster กำลังจะติด ของ Dashboard)
+ Poster Logistics — เฟส ค: หน้าจอ (ฝังในแท็บ 🚚 Poster Logistics ของ Dashboard)
  Dashboard โหลดไฟล์นี้ผ่าน plGetUi() แล้วเรียก PLX.mount(กล่อง, { back }) · ใช้ธีม/คลาสเดิม (bl-card, bl-chip, bl-vseg)
  ฝั่งหน้าจอแค่ซ่อน/แสดงปุ่ม — สิทธิ์จริงตรวจที่ server ทุกครั้ง
 ===================================================================== -->
@@ -95,6 +95,7 @@
   .plx-photos .ph button { position:absolute; top:2px; right:2px; width:22px; height:22px; border-radius:50%; border:0; background:rgba(0,0,0,.6); color:#fff; font-size:12px; cursor:pointer; }
   .plx-pick { min-height:48px; border:1px dashed var(--accent); border-radius:10px; display:flex; align-items:center; justify-content:center; gap:6px; color:var(--accent-strong); font-weight:700; cursor:pointer; }
   .plx-pick input { display:none; }
+  .plx-pick2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .plx-msg { border-radius:10px; padding:10px 12px; font-size:13px; }
   .plx-msg.err { background:#fdecea; color:#a12a1d; border:1px solid #e6a39b; }
   .plx-login { max-width:420px; margin:8px auto; display:flex; flex-direction:column; gap:12px; }
@@ -176,6 +177,7 @@
   var PLX = window.PLX = {};
   var root, opts = {}, D = null, fromCache = false, loading = false, me = { role: "" };
   var view = "mine", month = "", stage = "", q = "", actAs = "";
+  var group = "date";   // แท็บ "ทุกงาน" ดูตาม: date กำหนดการ · brand สินค้า · airport สนามบิน (แบบเดียวกับ Poster Calendar)
   var cur = null, curHist = null, curSuggest = null, sending = false, pendPhotos = {};
   var curMsg = null; // ข้อความผลบันทึกล่าสุด · คงไว้ตอนวาดลิ้นชักใหม่ (กันหน้าเลื่อนแล้วกดพลาด)
   var CACHE_KEY = "plx_cache_v1", TOK_KEY = "plx_tok", EMAIL_KEY = "plx_email", USER_KEY = "plx_user";
@@ -214,12 +216,18 @@
   }
   // การกระทำหลักของงานนี้ (ปุ่มบนการ์ด) ตามลำดับความสำคัญ
   var MAIN_ORDER = ["create", "ackLate", "shipDate", "plan", "shipped", "received", "installed", "proofSent"];
-  function mainAction(job) {
+  // mineOnly (หน้า "งานของฉัน"): Admin กดได้ทุกขั้น แต่นับเป็นงานของ Admin เฉพาะขั้นที่ไม่มีบทบาทอื่นรับผิดชอบ
+  //   (เช่น กำหนดวันส่ง) — ไม่งั้นงาน "สร้างงาน" ของ AE ฯลฯ จะท่วมรายการของ Admin · หน้า "ทุกงาน" ยังแสดงปุ่มทุกขั้นตามเดิม
+  function ownsAction(k) {
+    return role() !== "Admin" || !D.actions[k].roles.length;
+  }
+  function mainAction(job, mineOnly) {
     for (var i = 0; i < MAIN_ORDER.length; i++) {
       var k = MAIN_ORDER[i];
       // สถานะอื่นแก้แผน/วันส่งได้ในแผง แต่ไม่นับเป็นงานค้าง
       if (k === "plan" && job.status !== S().WAIT_MA) continue;
       if (k === "shipDate" && job.status !== S().WAIT_SHIP) continue;
+      if (mineOnly && !ownsAction(k)) continue;
       if (can(k, job)) return k;
     }
     return "";
@@ -479,7 +487,7 @@
       return '<div class="plx-urow"><div class="who"><b>' + esc(u.name || u.email) + ' <span class="plx-role">' + esc(u.role || "ไม่มีบทบาท") + "</span>" + (u.status === "inactive" ? ' <span class="plx-role off">ระงับ</span>' : "") + "</b><span>" + esc(u.email) + (u.username ? " · ชื่อผู้ใช้ " + esc(u.username) : "") + " · " + (u.hasPassword ? "มีรหัสผ่าน" : "ยังไม่มีรหัสผ่าน") + '</span></div>' +
         '<div class="btns"><button type="button" class="plx-btn" data-u="edit" data-i="' + i + '">แก้ไข</button><button type="button" class="plx-btn warn" data-u="reset" data-i="' + i + '">' + (u.hasPassword ? "รีเซ็ตรหัสผ่าน" : "สร้างรหัสผ่าน") + "</button></div></div>";
     }).join("");
-    box.innerHTML = mhead("👥 จัดการผู้ใช้") + (resultHtml || "") +
+    box.innerHTML = mhead("👥 จัดการผู้ใช้") + (resultHtml || "") + signupHtml(U) +
       '<div class="plx-ulist">' + (rows || '<div class="plx-urow">ยังไม่มีผู้ใช้</div>') + "</div>" +
       '<form novalidate class="plx-act" style="border-top:1px solid var(--border);padding-top:12px"><h3 style="font-size:14px;margin:0">' + (e.email ? "แก้ไขผู้ใช้" : "เพิ่มผู้ใช้ใหม่ (ระบบสร้างรหัสผ่านให้อัตโนมัติ)") + "</h3>" +
       field("อีเมล", '<input type="email" name="email" autocomplete="off" ' + (e.email ? "readonly" : "") + ' value="' + esc(e.email) + '">', true) +
@@ -503,6 +511,7 @@
       });
     });
     bindPerms(box, U);
+    bindSignups(box, U);
     var nw = $('[data-u="new"]', box); if (nw) nw.addEventListener("click", function () { drawUsers(box, null, ""); });
     var f = $("form", box);
     f.addEventListener("submit", function (ev) {
@@ -515,6 +524,53 @@
         U.users = U.users.map(function (x) { if (x.email === u.email) { found = true; return u; } return x; });
         if (!found) U.users.push(u);
         drawUsers(box, null, r.password ? pwResult(u.name || u.email, u.email, r.password) : '<div class="plx-msg ok">บันทึกแล้ว ✔</div>');
+      });
+    });
+  }
+  // คำขอสมัครที่รออนุมัติ (มาจาก plAdminUsers) — Admin เลือกบทบาทแล้วกดอนุมัติ/ปฏิเสธ
+  function signupHtml(U) {
+    var S = U.signups || [], roles = U.signupRoles || [];
+    if (!S.length) return "";
+    return '<div class="plx-sgn"><h3 style="font-size:14px;margin:0 0 6px">📝 คำขอสมัครรออนุมัติ (' + S.length + ')</h3><div class="plx-ulist">' + S.map(function (q, i) {
+      var warn = q.google && q.email && q.google !== q.email ? '<br><span style="color:#a12a1d">⚠ อีเมลที่กรอกไม่ตรงกับบัญชี Google ที่ใช้สมัคร</span>' : "";
+      return '<div class="plx-urow"><div class="who"><b>' + esc(q.name) + "</b><span>ชื่อผู้ใช้ " + esc(q.username) + " · " + (q.email ? esc(q.email) : "ไม่มีอีเมล") + " · สมัครเมื่อ " + esc(q.at) +
+        (q.google ? "<br>บัญชี Google ที่ใช้สมัคร: " + esc(q.google) : "") + warn + "</span></div>" +
+        '<div class="btns"><select data-s="role" data-i="' + i + '" aria-label="บทบาทของ ' + esc(q.name) + '" style="height:32px;border:1px solid var(--border);border-radius:8px;padding:0 6px;font:inherit;font-size:12px;background:#fff;width:auto">' +
+        roles.map(function (r) { return "<option" + (r === q.role ? " selected" : "") + ">" + esc(r) + "</option>"; }).join("") + "</select>" +
+        '<button type="button" class="plx-btn pri" data-s="ok" data-i="' + i + '">อนุมัติ</button><button type="button" class="plx-btn warn" data-s="no" data-i="' + i + '">ปฏิเสธ</button></div></div>';
+    }).join("") + '</div><div class="plx-smsg"></div></div>';
+  }
+  function bindSignups(box, U) {
+    var say = function (t) { var o = $(".plx-smsg", box); if (o) o.innerHTML = t ? '<div class="plx-msg err">' + esc(t) + "</div>" : ""; };
+    var done = function (i, html) {
+      U.signups.splice(i, 1);
+      if (D) D.pendingSignups = U.signups.length;
+      renderHead();
+      drawUsers(box, null, html);
+    };
+    $$('[data-s="ok"]', box).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var i = +b.getAttribute("data-i"), q = U.signups[i], sel = $('select[data-s="role"][data-i="' + i + '"]', box);
+        var role = sel ? sel.value : q.role;
+        if (!confirm("อนุมัติ " + q.name + " (ชื่อผู้ใช้ " + q.username + ") เป็นบทบาท " + role + "?")) return;
+        b.disabled = true;
+        authCall("plAdminApproveSignup", [tok, q.id, role], function (r) {
+          if (r && r.ok) {
+            U.users.push(r.user);
+            done(i, '<div class="plx-msg ok">อนุมัติ ' + esc(q.name) + " แล้ว ✔ เข้าสู่ระบบได้ด้วยชื่อผู้ใช้ " + esc(q.username) + " และรหัสผ่านที่ตั้งไว้ตอนสมัคร</div>");
+          } else { b.disabled = false; say((r && r.message) || "อนุมัติไม่สำเร็จ"); }
+        });
+      });
+    });
+    $$('[data-s="no"]', box).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var i = +b.getAttribute("data-i"), q = U.signups[i];
+        if (!confirm("ปฏิเสธคำขอของ " + q.name + " (ชื่อผู้ใช้ " + q.username + ")?")) return;
+        b.disabled = true;
+        authCall("plAdminRejectSignup", [tok, q.id], function (r) {
+          if (r && r.ok) done(i, '<div class="plx-msg ok">ปฏิเสธคำขอของ ' + esc(q.name) + " แล้ว</div>");
+          else { b.disabled = false; say((r && r.message) || "ปฏิเสธไม่สำเร็จ"); }
+        });
       });
     });
   }
@@ -561,9 +617,10 @@
   PLX.mount = function (el, o) {
     root = el; opts = o || {};
     view = lsGet("plx_view") || "mine";
+    group = lsGet("plx_group") || "date";
     root.innerHTML =
       '<div class="plx">' +
-        '<div class="bl-card"><div class="plx-head"><div><div class="bl-title">🚚 ติดตามขนส่ง Poster</div><div class="plx-who"></div><div class="plx-src"></div></div>' +
+        '<div class="bl-card"><div class="plx-head"><div><div class="bl-title">🚚 Poster Logistics</div><div class="plx-who"></div><div class="plx-src"></div></div>' +
         '<div class="plx-hbtns"><button type="button" class="plx-btn" data-a="refresh">🔄 รีเฟรช</button><button type="button" class="plx-btn" data-a="pw" style="display:none">🔑 รหัสผ่าน</button><button type="button" class="plx-btn" data-a="users" style="display:none">👥 ผู้ใช้</button><button type="button" class="plx-btn" data-a="logout" style="display:none">ออกจากระบบ</button><button type="button" class="plx-btn" data-a="back">← มุมมองเดิม</button></div></div>' +
         '<div class="plx-testbox"></div>' +
         '<div class="plx-vseg-wrap"><div class="bl-vseg" role="tablist"></div></div>' +
@@ -575,14 +632,17 @@
       '<div class="plx-modal" aria-hidden="true"><div class="plx-mbox"></div></div>' +
       '<div class="plx-toast"></div>';
     $('[data-a="refresh"]').addEventListener("click", refresh);
-    $('[data-a="logout"]').addEventListener("click", function () { requireLogin("ออกจากระบบแล้ว"); });
+    // ฝังในแดชบอร์ด → ออกจากระบบทั้งเว็บ (แดชบอร์ดล้าง token แล้วโหลดหน้าใหม่)
+    $('[data-a="logout"]').addEventListener("click", function () { if (opts.logout) opts.logout(); else requireLogin("ออกจากระบบแล้ว"); });
     $('[data-a="pw"]').addEventListener("click", openPwModal);
     $('[data-a="users"]').addEventListener("click", openUsersModal);
     $(".plx-modal").addEventListener("click", function (e) { if (e.target === this) closeModal(); });
     tok = lsGet(TOK_KEY) || "";
     login.email = lsGet(EMAIL_KEY) || "";
     login.user = lsGet(USER_KEY) || "";
-    $('[data-a="back"]').addEventListener("click", function () { closeDrawer(); if (opts.back) opts.back(); });
+    // ปุ่ม "มุมมองเดิม" ใช้เฉพาะตอนฝังแบบมีที่ให้กลับ (แดชบอร์ดแยกเป็นแท็บแล้ว ไม่ส่ง back มา → ซ่อนปุ่ม)
+    if (opts.back) $('[data-a="back"]').addEventListener("click", function () { closeDrawer(); opts.back(); });
+    else $('[data-a="back"]').style.display = "none";
     $(".plx-back").addEventListener("click", closeDrawer);
     $(".plx-x").addEventListener("click", closeDrawer);
     document.addEventListener("keydown", function (e) { if (e.key !== "Escape") return; var md = $(".plx-modal"); if (md && md.classList.contains("open")) closeModal(); else if (isOpen()) closeDrawer(); });
@@ -601,6 +661,8 @@
     $('[data-a="logout"]').style.display = !needsLogin && me && me.via === "token" ? "" : "none";
     $('[data-a="pw"]').style.display = inn && me.role ? "" : "none";
     $('[data-a="users"]').style.display = inn && me.role === "Admin" ? "" : "none";
+    var pn = inn && me.role === "Admin" && D && D.pendingSignups ? +D.pendingSignups : 0;      // คำขอสมัครรออนุมัติ
+    $('[data-a="users"]').innerHTML = "👥 ผู้ใช้" + (pn ? ' <span class="plx-role off">' + pn + " รออนุมัติ</span>" : "");
     var src = $(".plx-src");
     if (loading) { src.className = "plx-src"; src.textContent = D ? "กำลังโหลดข้อมูลล่าสุด…" + (fromCache ? " (ตอนนี้แสดงข้อมูลจาก cache " + D.fetchedAt + ")" : "") : "กำลังโหลด…"; }
     else if (D) { src.className = "plx-src" + (fromCache ? " cache" : ""); src.textContent = (fromCache ? "ข้อมูลจาก cache " : "ข้อมูลล่าสุดจากชีต ") + D.fetchedAt; }
@@ -624,18 +686,16 @@
     var ml = Object.keys(months).sort();
     var tk = todayKey().slice(0, 7);
     if (!month || !months[month]) month = months[tk] ? tk : (ml[0] || "");
-    var bar = '<select data-f="month" aria-label="เดือน">' + ml.map(function (m) { return '<option value="' + m + '"' + (m === month ? " selected" : "") + ">" + thMonth(m) + "</option>"; }).join("") + "</select>" +
-      '<input type="search" data-f="q" placeholder="ค้นหา รหัสป้าย / ลูกค้า / สนามบิน" value="' + esc(q) + '">';
-    if (me.role === "Admin") {
-      bar += '<select data-f="as" aria-label="ดูในฐานะ"><option value="">ดูในฐานะ: Admin</option>' +
-        ["AE", "Ops", "Production", "MA", "Installer"].map(function (r) { return '<option value="' + r + '"' + (actAs === r ? " selected" : "") + ">ดูในฐานะ: " + r + "</option>"; }).join("") + "</select>";
+    // แถบเลือกเดือน / ค้นหา / ดูในฐานะ เอาออกแล้ว → แท็บ "ทุกงาน" มีปุ่ม "ดูตาม กำหนดการ / สินค้า / สนามบิน" แทน
+    var bar = "";
+    if (view === "all") {
+      var GV = [["date", "กำหนดการ"], ["brand", "สินค้า"], ["airport", "สนามบิน"]];
+      bar = '<div class="bl-view"><span>ดูตาม</span><div class="bl-vseg plx-gseg" role="tablist">' + GV.map(function (v) {
+        return '<button type="button" role="tab" data-g="' + v[0] + '" class="' + (group === v[0] ? "on" : "") + '" aria-selected="' + (group === v[0]) + '">' + v[1] + "</button>";
+      }).join("") + "</div></div>";
     }
     $(".plx-bar").innerHTML = bar;
-    $('[data-f="month"]').addEventListener("change", function (e) { month = e.target.value; renderAll(); });
-    var qi = $('[data-f="q"]');
-    qi.addEventListener("input", function () { q = qi.value; renderList(); renderChips(); });
-    var asSel = $('[data-f="as"]');
-    if (asSel) asSel.addEventListener("change", function (e) { actAs = e.target.value; renderAll(); if (isOpen()) renderDrawer(); });
+    $$(".plx-gseg button").forEach(function (b) { b.addEventListener("click", function () { group = b.getAttribute("data-g"); lsSet("plx_group", group); renderAll(); }); });
     renderChips();
     renderList();
   }
@@ -674,6 +734,8 @@
   function filtered() {
     var list = baseJobs();
     if (stage) { var st = STAGES.filter(function (x) { return x[0] === stage; })[0]; if (st) list = list.filter(stageTest(st)); }
+    // ไม่ได้เลือกชิป → ซ่อนงานที่ปิดแล้ว (ส่ง Report แล้ว) · ดูย้อนหลังได้โดยกดชิป "ปิดงาน"
+    else list = list.filter(function (j) { return j.status !== S().CLOSED; });
     return list;
   }
 
@@ -701,10 +763,11 @@
     if (view === "mine" && !stage) html = mineHtml(list);
     else if (view === "cal") html = calHtml(list);
     else if (view === "ship") html = groupHtml(list, function (j) { return j.shipTo || "(ยังไม่ระบุจุดจัดส่ง)"; }, function (a, b) { return a < b ? -1 : 1; });
-    else html = groupHtml(list, function (j) { return (j.customer || "(ไม่ระบุลูกค้า)") + "\u0001" + (j.week || ""); }, function (a, b) {
-      var wa = a.split("\u0001")[1] || "9999", wb = b.split("\u0001")[1] || "9999";
-      return wa < wb ? -1 : wa > wb ? 1 : a < b ? -1 : 1;
-    });
+    else if (group === "brand") html = groupHtml(list, function (j) { return j.customer || "(ไม่ระบุสินค้า)"; }, function (a, b) { return a < b ? -1 : 1; });
+    else if (group === "airport") html = groupHtml(list, function (j) { return (j.iata || "–") + "\u0001" + (j.airport || ""); }, function (a, b) { return a < b ? -1 : 1; },
+      function (p) { return esc(p[0]) + (p[1] ? " <span>" + esc(p[1]) + "</span>" : ""); });
+    else html = groupHtml(list, function (j) { return j.installDate || j.adOn || "9999-99-99"; }, function (a, b) { return a < b ? -1 : 1; },
+      function (p) { return p[0] === "9999-99-99" ? "(ยังไม่มีกำหนด)" : (/^\d{4}-\d{2}-\d{2}$/.test(p[0]) ? th(p[0]) + " " + (+p[0].slice(0, 4) + 543) : esc(p[0])); });
     box.innerHTML = html || '<div class="bl-card"><div class="plx-empty">ไม่มีงานตามตัวกรองนี้</div></div>';
     $$(".plx-job, .plx-ev", box).forEach(function (el) {
       el.addEventListener("click", function (ev) {
@@ -721,12 +784,13 @@
     return null;
   }
   function weekLabel(w) { return w ? "สัปดาห์ " + th(w) + " – " + th(addDaysKey(w, 6)) : "ยังไม่มีวัน"; }
-  function groupHtml(list, keyFn, sortFn) {
+  // headFn(parts) = หัวกลุ่มแบบกำหนดเอง (ค่าในคีย์คั่นด้วย \u0001) · ไม่ส่งมา = แสดงคีย์ตรง ๆ
+  function groupHtml(list, keyFn, sortFn, headFn) {
     var g = {};
     list.forEach(function (j) { var k = keyFn(j); (g[k] = g[k] || []).push(j); });
     return Object.keys(g).sort(sortFn).map(function (k) {
       var parts = k.split("\u0001");
-      var head = parts.length > 1 ? esc(parts[0]) + " <span>" + weekLabel(parts[1]) + "</span>" : esc(parts[0]);
+      var head = headFn ? headFn(parts) : parts.length > 1 ? esc(parts[0]) + " <span>" + weekLabel(parts[1]) + "</span>" : esc(parts[0]);
       var items = g[k].sort(function (a, b) { return (a.installDate || a.adOn || "9") < (b.installDate || b.adOn || "9") ? -1 : 1; });
       return '<div class="plx-grp"><div class="plx-gh"><div>' + head + "</div><span>" + items.length + " ป้าย</span></div>" + items.map(function (j) { return jobHtml(j); }).join("") + "</div>";
     }).join("");
@@ -737,14 +801,15 @@
     if (!r) return '<div class="bl-card"><div class="plx-empty">บัญชีนี้ยังไม่มีบทบาทในแท็บ Users จึงดูได้อย่างเดียว — ใช้มุมมอง "ทุกงาน"</div></div>';
     var t = todayKey(), tm = addDaysKey(t, 1);
     var items = [];
-    list.forEach(function (j) { var k = mainAction(j); if (k) items.push({ j: j, k: k, due: dueOf(j, k) || "9999" }); });
+    list.forEach(function (j) { var k = mainAction(j, true); if (k) items.push({ j: j, k: k, due: dueOf(j, k) || "9999" }); });
     // งานที่ยังไม่สร้าง แสดงเฉพาะที่ Ad on ภายใน 21 วัน ไม่งั้นรายการยาวเกิน
     items = items.filter(function (x) { return x.k !== "create" || (x.due !== "9999" && dayDiff(t, x.due) <= 21) || !x.j.adOn; });
     items.sort(function (a, b) { return (b.j.slaOverdue ? 1 : 0) - (a.j.slaOverdue ? 1 : 0) || (a.due < b.due ? -1 : a.due > b.due ? 1 : 0); });
     if (!items.length) return '<div class="bl-card"><div class="plx-empty">ไม่มีงานค้างของคุณในเดือนนี้ 🎉</div></div>';
     var sec = { late: [], today: [], tom: [], next: [] };
     items.forEach(function (x) {
-      if (x.j.slaOverdue || (x.due < t && x.k !== "create")) sec.late.push(x);
+      // งานที่ยังไม่สร้างแต่วัน Ad on ผ่านไปแล้ว ก็นับเป็นเลยกำหนด (due = "9999" เมื่อไม่มี Ad on จึงไม่เข้ากลุ่มนี้)
+      if (x.j.slaOverdue || x.due < t) sec.late.push(x);
       else if (x.due === t) sec.today.push(x);
       else if (x.due === tm) sec.tom.push(x);
       else sec.next.push(x);
@@ -834,7 +899,7 @@
       kv("กำหนดวันส่งโดย", esc(j.confirmedBy ? j.confirmedBy + " · " + j.confirmedAt : "")) +
       kv("ขนส่ง / พัสดุ", esc(j.tracking ? j.tracking + (j.shippedAt ? " · ส่ง " + j.shippedAt : "") : "")) +
       kv("รับของ", esc(j.receivedAt ? j.condition + " · " + j.receivedAt : "")) +
-      kv("ติดตั้งจริง", esc(j.installedAt)) + kv("ส่ง Proof", esc(j.proofAt)) +
+      kv("ติดตั้งจริง", esc(j.installedAt)) + kv("ส่ง Report", esc(j.proofAt)) +
       kv("เหตุผลล่าสุด", esc(j.reason)) + kv("Remark", esc(j.remark)) +
       "</dl>" + photoLinks(j.photoList);
 
@@ -854,9 +919,8 @@
   function formsHtml(j) {
     var out = [], s = S(), sg = curSuggest || {};
     if (can("create", j)) {
-      out.push(form("create", "สร้างงาน (AE)",
-        field("วัน Ad on", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '" required>', true) +
-        '<div class="plx-sub">สร้างแล้วงานจะไปรอ Admin กำหนดวันส่ง (หลังคุยโรงพิมพ์) จากนั้น MA แจ้งแผนติดตั้ง</div>', "สร้างงาน → ส่งให้ Admin กำหนดวันส่ง"));
+      out.push(form("create", "สร้างงาน · ใส่วัน Ad on",
+        field("วัน Ad on", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '" required>', true), "บันทึก"));
     }
     if (can("ackLate", j)) {
       out.push(form("ackLate", "รับทราบ: ติดตั้งหลังวัน Ad on",
@@ -867,19 +931,19 @@
       var beforePlan = firstS || j.status === s.WAIT_MA;
       var bufS = sg.buffer != null ? sg.buffer : 2;
       var shipS = j.shipDate || sg.shipDate || "";
-      out.push(form("shipDate", firstS ? "กำหนดวันส่ง (Admin)" : "แก้วันส่ง (Admin)",
+      out.push(form("shipDate", firstS ? "กำหนดวันส่ง" : "แก้วันส่ง",
         '<div class="plx-sub">คุยกับโรงพิมพ์ว่าได้วันไหน แล้วใส่วันที่จะส่ง Poster ให้ MA นัดต่อ</div>' +
         field("วันจัดส่ง", '<input type="date" name="shipDate" value="' + shipS + '">', true) +
         '<div class="plx-live"></div>' +
         (beforePlan ? "" : field("เหตุผล (ต้องใส่เมื่อแก้วันส่งหลังกำหนดการครบแล้ว)", '<textarea name="reason"></textarea>')) +
-        '<div class="plx-sub">Ad on ' + th(j.adOn) + " · buffer " + bufS + " วัน" + (j.installDate ? " · MA แจ้งวันติดตั้ง " + th(j.installDate) : "") + (!j.shipDate && shipS ? " · วันที่กรอกให้คือค่าแนะนำ (Ad on − 1 − buffer)" : "") + "</div>",
-        firstS ? "กำหนดวันส่ง → ส่งให้ MA แจ้งแผน" : "บันทึกวันส่ง", "", !firstS));
+        '<div class="plx-sub">Ad on ' + th(j.adOn) + " · buffer " + bufS + " วัน" + (j.installDate ? " · MA แจ้งวันติดตั้ง " + th(j.installDate) : "") + (!j.shipDate && shipS ? " · วันที่กรอกให้คือค่าแนะนำ (Ad on − 1 − buffer เลื่อนหลบเสาร์-อาทิตย์/วันหยุด)" : "") + "</div>",
+        "บันทึกวันส่ง", "", !firstS));
     }
     if (can("plan", j)) {
       var settledP = [s.SCHEDULED, s.WAIT_AE, s.RESHIP].indexOf(j.status) >= 0;
       var firstP = j.status === s.WAIT_MA;
       var instP = j.installDate || (sg.installDate && (!j.shipDate || sg.installDate >= j.shipDate) ? sg.installDate : j.shipDate) || "";
-      out.push(form("plan", firstP ? "แจ้งแผนติดตั้ง (MA)" : "แก้แผนติดตั้ง (MA)",
+      out.push(form("plan", firstP ? "แจ้งแผนติดตั้ง" : "แก้แผนติดตั้ง",
         '<div class="plx-sub">Admin กำหนดวันส่ง <b>' + th(j.shipDate) + "</b> แล้ว · วันติดตั้งต้องไม่ก่อนวันส่ง</div>" +
         field("จุดจัดส่ง / สถานที่รับงาน", '<input type="text" name="shipTo" value="' + esc(j.shipTo || sg.shipTo || "") + '" list="plx-shipto">' +
           '<datalist id="plx-shipto">' + (sg.shipTo ? '<option value="' + esc(sg.shipTo) + '">' : "") + "</datalist>", true) +
@@ -888,13 +952,14 @@
         field("ทีมติดตั้ง (ติดเอง หรือส่ง Supplier)", '<select name="team"><option value="">–</option>' + D.teams.map(function (t) { return '<option' + ((j.team || sg.team) === t ? " selected" : "") + ">" + esc(t) + "</option>"; }).join("") + "</select>") +
         '<div class="plx-live"></div>' +
         field("เหตุผล" + (settledP ? " (ต้องใส่เมื่อแก้แผนหลังกำหนดการครบแล้ว)" : " (ต้องใส่ถ้าติดตั้งหลัง Ad on)"), '<textarea name="reason"></textarea>') +
-        '<div class="plx-sub">Ad on ' + th(j.adOn) + (sg.installDate && !j.installDate ? " · วันติดตั้งที่กรอกให้คือค่าแนะนำ (Ad on − 1)" : "") + "</div>",
-        firstP ? "แจ้งแผน → กำหนดการครบ" : "บันทึกแผนติดตั้ง", "", !firstP));
+        '<div class="plx-sub">Ad on ' + th(j.adOn) + (sg.installDate && !j.installDate ? " · วันติดตั้งที่กรอกให้คือค่าแนะนำ (Ad on − 1 เลื่อนหลบเสาร์-อาทิตย์/วันหยุด)" : "") + "</div>",
+        "บันทึกแผนติดตั้ง", "", !firstP));
     }
     if (can("shipped", j)) {
       out.push(form("shipped", j.status === s.RESHIP ? "ส่งใหม่ (ของเสียหายรอบก่อน)" : "ส่งของแล้ว",
         field("ขนส่ง / เลขพัสดุ", '<input type="text" name="tracking" placeholder="เช่น Kerry KEX123456" value="">', true) +
-        field("หมายเหตุ", '<textarea name="note"></textarea>'), "ส่งแล้ว"));
+        field("หมายเหตุ", '<textarea name="note"></textarea>') +
+        photoPicker("shipped", "แนบรูป (ถ้ามี)"), "ส่งแล้ว"));
     }
     if (can("received", j)) {
       out.push(form("received", "รับของปลายทาง",
@@ -910,10 +975,11 @@
         field("หมายเหตุ", '<textarea name="note"></textarea>'), "ติดตั้งแล้ว"));
     }
     if (can("proofSent", j)) {
-      out.push(form("proofSent", "ส่ง Proof ให้ลูกค้า", '<div class="plx-sub">On air แล้ว กดเมื่อส่ง Proof ให้ลูกค้าเรียบร้อย ระบบจะปิดงาน</div>', "ส่ง Proof แล้ว → ปิดงาน"));
+      out.push(form("proofSent", "ส่ง Report ให้ลูกค้า", '<div class="plx-sub">On air แล้ว กดเมื่อส่ง Report ให้ลูกค้าเรียบร้อย ระบบจะปิดงาน</div>' +
+        photoPicker("proofSent", "แนบรูป Report (ถ้ามี)"), "ส่ง Report แล้ว → ปิดงาน"));
     }
     if (can("updateAdOn", j)) {
-      out.push(form("updateAdOn", "แก้วัน Ad on (AE)",
+      out.push(form("updateAdOn", "แก้วัน Ad on",
         field("วัน Ad on ใหม่", '<input type="date" name="adOn" value="' + dateVal(j.adOn) + '">', true) +
         field("เหตุผล" + (j.status !== s.WAIT_MA && j.status !== s.WAIT_SHIP ? " (ต้องใส่ เพราะมีกำหนดการแล้ว)" : ""), '<textarea name="reason"></textarea>'), "บันทึกวัน Ad on", "", true));
     }
@@ -924,7 +990,12 @@
   }
   function field(label, input, req) { return '<label class="plx-f"><span>' + label + (req ? ' <b class="req">*</b>' : "") + "</span>" + input + "</label>"; }
   function photoPicker(key, label) {
-    return '<label class="plx-pick">📷 ' + label + '<input type="file" accept="image/*" capture="environment" multiple data-pick="' + key + '"></label><div class="plx-photos" data-prev="' + key + '"></div>';
+    // 2 ปุ่ม: ถ่ายรูป (capture = เปิดกล้องทันที) / เลือกจากคลัง (ไม่มี capture = เลือกรูปเดิมในเครื่องได้หลายรูป)
+    //   บน iPhone ถ้าใส่ capture ไว้ จะเปิดกล้องอย่างเดียว เลือกรูปจากคลังไม่ได้ จึงแยกเป็น 2 input
+    return '<div class="plx-sub">' + label + '</div><div class="plx-pick2">' +
+      '<label class="plx-pick">📷 ถ่ายรูป<input type="file" accept="image/*" capture="environment" data-pick="' + key + '"></label>' +
+      '<label class="plx-pick">🖼 เลือกจากคลัง<input type="file" accept="image/*" multiple data-pick="' + key + '"></label>' +
+      '</div><div class="plx-photos" data-prev="' + key + '"></div>';
   }
   function form(key, title, body, btnText, btnCls, collapsed) {
     return '<form class="plx-box" data-form="' + key + '" novalidate>' +
@@ -1011,7 +1082,7 @@
       if (i >= files.length) return Promise.resolve(urls);
       progress("กำลังอัปโหลดรูป " + (i + 1) + "/" + files.length + "…");
       return shrink(files[i]).then(function (dataUrl) {
-        return gs("uploadJobPhoto", job.rowKey, { dataUrl: dataUrl, kind: key === "received" ? "รับของ" : "ติดตั้ง" });
+        return gs("uploadJobPhoto", job.rowKey, { dataUrl: dataUrl, kind: key === "received" ? "รับของ" : key === "shipped" ? "ส่งของ" : key === "proofSent" ? "Report" : "ติดตั้ง" });
       }).then(function (r) {
         if (!r || !r.ok) throw r || { message: "อัปโหลดรูปไม่สำเร็จ" };
         urls.push(r.url); i++;
@@ -1076,13 +1147,20 @@
     $$(".plx-db button").forEach(function (b) { b.disabled = true; });
     showFormMsg("", "");
     var progress = function (t) { btn.textContent = t; };
-    var chain = (key === "installed" || key === "received") && (pendPhotos[key] || []).length
-      ? uploadAll(key, j, progress).then(function (urls) { payload.photoUrls = urls; })
+    var photoWarn = "";
+    var chain = (key === "installed" || key === "received" || key === "shipped" || key === "proofSent") && (pendPhotos[key] || []).length
+      ? uploadAll(key, j, progress).then(function (urls) { payload.photoUrls = urls; }, function (e) {
+          // รูป Report เป็นตัวเลือก: อัปโหลดไม่สำเร็จ ต้องไม่ขวางการปิดงาน → ปิดงานต่อโดยไม่แนบรูป แล้วเตือน
+          if (key !== "proofSent") throw e;
+          payload.photoUrls = [];
+          photoWarn = "แนบรูป Report ไม่สำเร็จ (" + ((e && e.message) || "อัปโหลดไม่ได้") + ") ปิดงานโดยไม่มีรูป";
+        })
       : Promise.resolve();
     chain.then(function () {
       progress("กำลังบันทึก…");
       var fn = { create: "createJob", updateAdOn: "updateAdOn", plan: "planInstall", shipDate: "setShipDate", ackLate: "acknowledgeLate", shipped: "markShipped", received: "markReceived", installed: "markInstalled", proofSent: "markProofSent" }[key];
-      return (key === "ackLate" || key === "proofSent") ? gs(fn, j.rowKey, j.ver) : gs(fn, j.rowKey, payload, j.ver);
+      // proofSent: payload ต่อท้าย (rowKey, ver, payload) เพื่อให้รูปแบบเดิม (rowKey, ver) ยังใช้ได้
+      return key === "ackLate" ? gs(fn, j.rowKey, j.ver) : key === "proofSent" ? gs(fn, j.rowKey, j.ver, payload) : gs(fn, j.rowKey, payload, j.ver);
     }).then(function (r) { done(r); }, function (e) { done(e && e.code ? e : { ok: false, code: "ERROR", message: (e && e.message) || String(e) }); });
 
     function done(r) {
@@ -1095,6 +1173,7 @@
         lsSet(CACHE_KEY, JSON.stringify(D));
         renderChips(); renderList(); renderDrawer();
         var warn = (r.warnings || []).filter(String);
+        if (photoWarn) warn.push(photoWarn);
         showFormMsg(warn.length ? "warn" : "ok", "บันทึกแล้ว ✔" + (warn.length ? "<br>" + esc(warn.join(" · ")) : "") +
           (key === "create" && r.suggest ? "<br>ค่าแนะนำ: ติดตั้ง " + th(r.suggest.installDate) + " · ส่ง " + th(r.suggest.shipDate) : ""));
         toast("บันทึกแล้ว: " + D.actions[key].label);

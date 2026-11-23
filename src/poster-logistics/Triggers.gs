@@ -133,7 +133,7 @@ function plHandleEditB_(e, user) {
         writes[ctx.col.updatedAt] = plNowToken_();
         if (!job.installedAt && ctx.col.installedAt >= 0) writes[ctx.col.installedAt] = plNowText_();
         var oldStatus = job.status;
-        plWriteRow_(ctx.sheet, row, v, writes, plSystemZone_(ctx));
+        plWriteRow_(ctx.sheet, row, v, writes, plSystemZone_(ctx), plTextCols_(ctx));
         logs.push(plObj_(base, { col: PL_F.statusB, oldVal: "FALSE", newVal: "TRUE", action: "ติ๊ก Status ด้วยมือในชีต" }));
         logs.push(plObj_(base, { col: PL_F.status, oldVal: oldStatus, newVal: PL_S.INSTALLED_MANUAL, action: "ติ๊ก Status ด้วยมือในชีต" }));
         if (!job.photoList.length) warnNoPhoto(base, job, row);
@@ -147,7 +147,7 @@ function plHandleEditB_(e, user) {
             writes[ctx.col.status] = PL_S.INSTALLED_MANUAL;
             writes[ctx.col.updatedBy] = who;
             writes[ctx.col.updatedAt] = plNowToken_();
-            plWriteRow_(ctx.sheet, row, v, writes, plSystemZone_(ctx));
+            plWriteRow_(ctx.sheet, row, v, writes, plSystemZone_(ctx), plTextCols_(ctx));
             logs.push(plObj_(base, { col: PL_F.status, oldVal: PL_S.INSTALLED, newVal: PL_S.INSTALLED_MANUAL, action: "ติ๊ก Status กลับในชีต" }));
           }
           warnNoPhoto(base, job, row);
@@ -182,7 +182,7 @@ function plHandleEditB_(e, user) {
     }
     if (logs.length) {
       appendLog_(logs);
-      try { if (typeof clearDashboardCache === "function") clearDashboardCache(Config.SHEET_JOBS); } catch (x) { }
+      try { if (typeof clearDashboardCache_ === "function") clearDashboardCache_(Config.SHEET_JOBS); } catch (x) { }
     }
     return { rows: out, toast: toasts.join("\n") };
   });

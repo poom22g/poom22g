@@ -191,8 +191,8 @@ function plDailyDigest(e) {
 }
 
 var PL_DIGEST_MAX_TRIES = 4;          // รอบแรก 08:00 + ลองส่งต่อให้คนที่ยังไม่ได้อีก 3 รอบ (ผ่านรอบรายชั่วโมง)
-var PL_SEC_ONAIR_NEW = "ขึ้น On air แล้ว — กรุณาส่ง Proof ให้ลูกค้า";
-var PL_SEC_ONAIR_WAIT = "On air แล้ว ยังไม่ได้กด \"ส่ง Proof แล้ว\"";
+var PL_SEC_ONAIR_NEW = "ขึ้น On air แล้ว — กรุณาส่ง Report ให้ลูกค้า";
+var PL_SEC_ONAIR_WAIT = "On air แล้ว ยังไม่ได้กด \"ส่ง Report แล้ว\"";
 
 function plDigestKey_() { return "PL_DIGEST_STATE_" + plSpreadsheetId_(); }
 
@@ -219,8 +219,8 @@ function plDailyDigest_(opts) {
   var ma = plEmailsByRole_(["MA"]), admins = plEmailsByRole_(["Admin"]);
   var notes = [], onAir = [], onAirFail = [];
 
-  // 1) ถึงวัน Ad on + ติดตั้งแล้ว → On air (ระบบเปลี่ยนเอง ผ่าน plMutate_ = lock + เทียบ version + Log) แล้วแจ้ง AE ส่ง Proof
-  //    งานที่ On air อยู่แล้วแต่ยังไม่ปิด (ยังไม่กด "ส่ง Proof แล้ว") แจ้ง AE ซ้ำทุกวันจนกว่าจะปิด — ดูจากสถานะในชีต
+  // 1) ถึงวัน Ad on + ติดตั้งแล้ว → On air (ระบบเปลี่ยนเอง ผ่าน plMutate_ = lock + เทียบ version + Log) แล้วแจ้ง AE ส่ง Report
+  //    งานที่ On air อยู่แล้วแต่ยังไม่ปิด (ยังไม่กด "ส่ง Report แล้ว") แจ้ง AE ซ้ำทุกวันจนกว่าจะปิด — ดูจากสถานะในชีต
   //    จึงไม่ตกหล่นแม้วันที่สลับ On air อีเมลจะส่งไม่ออก
   jobs.forEach(function (j) {
     if (j.status === PL_S.ON_AIR) { box.add(plAeFor_(cidx, j, jobKeys), PL_SEC_ONAIR_WAIT, plJobLine_(j)); return; }
@@ -334,8 +334,31 @@ function plLogNotify_(what, r) {
  * แจ้งทันที (รอบละชั่วโมง): อ่าน Log ที่เพิ่มหลังรอบก่อน
  * ------------------------------------------------------------------- */
 
+// สลับเป็น On air ทุกรอบชั่วโมง (ไม่ส่งเมล): งานที่ติดตั้งหลัง 08:00 ในวัน Ad on จะไม่ต้องรอถึงเช้าวันถัดไป
+// งานที่สลับตรงนี้จะไปอยู่ในหัวข้อ "On air รอส่ง Report" ของสรุปรอบถัดไป
+function plOnAirSweep_() {
+  var today = plDateKey_(new Date()), done = [], fail = [];
+  plActiveJobs_(plJobsCtx_()).forEach(function (j) {
+    if ((j.status !== PL_S.INSTALLED && j.status !== PL_S.INSTALLED_MANUAL) || !j.adOn || j.adOn > today) return;
+    try {
+      plMutate_(PL_SYSTEM_USER, j.rowKey, j.ver, {
+        action: "On air (ระบบเปลี่ยนเมื่อถึงวัน Ad on)", roles: ["System"], from: [PL_S.INSTALLED, PL_S.INSTALLED_MANUAL],
+        apply: function () { return { changes: { status: PL_S.ON_AIR } }; }
+      });
+      done.push(j.sign);
+    } catch (e) { fail.push(j.sign + " (" + (e.code || "ERROR") + ")"); }
+  });
+  return { onAir: done, onAirFail: fail };
+}
+
 function plHourlyNotify(e) {
   plRequireTriggerOrAdmin_(e);
+  try {
+    var sw = plOnAirSweep_();
+    if (sw.onAir.length || sw.onAirFail.length) console.log("On air sweep: " + JSON.stringify(sw));
+  } catch (e0) {
+    console.error(e0 && e0.stack ? e0.stack : e0);
+  }
   var r = plHourlyNotify_({});
   console.log(JSON.stringify(r));
   try {

@@ -1,14 +1,15 @@
 /* =====================================================================
  * ชุดทดสอบเฟส ข — รันบน "สำเนา" ของชีตเท่านั้น (ไม่แตะชีตจริง)
  * วิธีใช้: เลือกฟังก์ชัน plTestPhaseB แล้วกด Run · ดูผลใน Execution log
- * ID สำเนาเก็บใน Script Properties ชื่อ PL_TEST_SPREADSHEET_ID (ถ้าไม่มี ใช้ค่าด้านล่าง)
+ * ID สำเนาเก็บใน Script Properties ชื่อ PL_TEST_SPREADSHEET_ID (ต้องตั้งก่อนรัน · ไม่ใส่ ID ในโค้ด)
  * ===================================================================== */
 
-var PL_TEST_SPREADSHEET_DEFAULT = "YOUR_TEST_SPREADSHEET_ID";  // [TEST] Poster Logistics phase B - ลบได้
+var PL_TEST_SPREADSHEET_DEFAULT = PropertiesService.getScriptProperties().getProperty("PL_TEST_SPREADSHEET_ID") || "";  // สำเนาชีตทดสอบ
 
 function plTestPhaseB() {
   plRequireAdminCaller_();
-  var testId = PropertiesService.getScriptProperties().getProperty("PL_TEST_SPREADSHEET_ID") || PL_TEST_SPREADSHEET_DEFAULT;
+  var testId = PL_TEST_SPREADSHEET_DEFAULT;
+  if (!testId) throw new Error("ยังไม่ได้ตั้ง Script Property PL_TEST_SPREADSHEET_ID");
   if (testId === PL_REAL_SPREADSHEET_ID_) throw new Error("ห้ามรันชุดทดสอบบนชีตจริง");
   var realId = Config.SPREADSHEET_ID;
   Config.SPREADSHEET_ID = testId;
@@ -53,10 +54,17 @@ function plTestPhaseB() {
     check("คนไม่มีบทบาทสร้างงานไม่ได้", code(r) === "FORBIDDEN", r);
     r = call(plCreateJob_, AE, key, { adOn: "31-Feb-2026" }, "");
     check("วัน Ad on ผิด → INVALID", code(r) === "INVALID", r);
+    // จำลองแถวที่เพิ่มหลัง setupSheets (ไม่มีรูปแบบข้อความ) — ระบบต้องตั้ง "@" เองก่อนเขียน token
+    sh.getRange(R, ctx.col.updatedAt + 1).setNumberFormat("General");
     r = call(plCreateJob_, AE, key, { adOn: "20-Nov-2026" }, "");
+    check("ver ที่ส่งกลับ = ค่าในชีต (token ไม่ถูกแปลงเป็นวันที่)", r.ok && plStr_(sh.getRange(R, ctx.col.updatedAt + 1).getValue()) === r.job.ver, sh.getRange(R, ctx.col.updatedAt + 1).getValue());
     check("AE สร้างงาน → รอกำหนดวันส่ง", r.ok && r.job.status === Config.STATUS.WAIT_SHIP && r.job.adOn === "2026-11-20", r);
     check("แนะนำวันติดตั้ง = Ad on − 1", r.ok && r.suggest.installDate === "2026-11-19", r.suggest);
-    check("แนะนำวันส่ง = ติดตั้ง − buffer", r.ok && r.suggest.shipDate === plDateKey_(plAddDays_("2026-11-19", -r.suggest.buffer)), r.suggest);
+    check("แนะนำวันส่ง = ติดตั้ง − buffer (หลบวันหยุด)", r.ok && r.suggest.shipDate === plDateKey_(plPrevWorkday_(plAddDays_("2026-11-19", -r.suggest.buffer))), r.suggest);
+    // Ad on จันทร์ 23-Nov-2026 → ติดตั้ง Ad on − 1 = อาทิตย์ → ถอยเป็นศุกร์ 20 · วันส่งต้องเป็นวันทำการ
+    var sgMon = plSuggest_(ctx, { iata: job0.iata, sign: job0.sign, row: R, adOn: "2026-11-23" });
+    check("ค่าแนะนำหลบเสาร์-อาทิตย์", sgMon.installDate === "2026-11-20" && plIsWorkday_(sgMon.shipDate) && sgMon.shipDate <= plDateKey_(plAddDays_("2026-11-20", -sgMon.buffer)), sgMon);
+    check("plPrevWorkday_ ข้ามวันหยุด (10-Dec-2026 → 9-Dec)", plDateKey_(plPrevWorkday_("2026-12-10")) === "2026-12-09", plDateKey_(plPrevWorkday_("2026-12-10")));
     check("เขียนแก้ล่าสุดโดย/เมื่อ", r.ok && r.job.updatedBy === "ae@test" && !!r.job.ver, r.job);
     var ver = r.job.ver;
     check("AD on ในชีตเป็น Date จริง", sh.getRange(R, ctx.col.adOn + 1).getValue() instanceof Date, sh.getRange(R, ctx.col.adOn + 1).getValue());
@@ -163,12 +171,12 @@ function plTestPhaseB() {
     SpreadsheetApp.flush();
     ver = r.ok ? r.job.ver : ver;
 
-    // --- ส่ง Proof ---
+    // --- ส่ง Report ---
     r = call(plMarkProofSent_, AE, key, ver);
-    check("ยังไม่ On air ส่ง Proof ไม่ได้", code(r) === "BAD_STATE", r);
+    check("ยังไม่ On air ส่ง Report ไม่ได้", code(r) === "BAD_STATE", r);
     sh.getRange(R, ctx.col.status + 1).setValue(Config.STATUS.ON_AIR);       // จำลองตัวตั้งเวลาเฟส ง
     r = call(plMarkProofSent_, AE, key, ver);
-    check("On air → ส่ง Proof → ปิดงาน", r.ok && r.job.status === Config.STATUS.CLOSED && !!r.job.proofAt, r);
+    check("On air → ส่ง Report → ปิดงาน", r.ok && r.job.status === Config.STATUS.CLOSED && !!r.job.proofAt, r);
 
     // --- อ่านรายการ / รายละเอียด ---
     var lst = call(plListPosterJobs_, AE, { month: "2026-11" });
@@ -178,6 +186,17 @@ function plTestPhaseB() {
     var gj = call(plGetJob_, AE, key);
     check("getJob มีประวัติจาก Log", gj.ok && gj.history.length >= 10, gj.ok ? gj.history.length : gj);
     check("SLA: เวลาสร้างงานอ่านจาก Log", !!mine && !!mine.createdAt, mine && mine.createdAt);
+    // แคชวันสร้างงาน (อ่านเฉพาะแถว Log ที่เพิ่ม) ต้องได้ผลเท่ากับอ่านใหม่ทั้งแท็บ
+    var caCached = JSON.stringify(plCreatedAt_());
+    CacheService.getScriptCache().remove("pl_created_v1_" + plSpreadsheetId_());
+    var caFull = JSON.stringify(plCreatedAt_());
+    check("plCreatedAt_ แคช = อ่านทั้งแท็บ", caCached === caFull, caCached.length + " vs " + caFull.length);
+    // ประวัติที่อ่านเฉพาะแถวของป้าย (TextFinder) ต้องเท่ากับไล่ทั้งแท็บ
+    var LG = plSheet_(Config.SHEET_LOG), brute = 0;
+    plReadLogRange_(LG, 2, LG.getLastRow()).forEach(function (x) {
+      if (x[3] === job0.sign && (x[8] ? x[8] === job0.monthKey : String(x[2]) === String(R))) brute++;
+    });
+    check("getJob ประวัติ (TextFinder) = ไล่ทั้งแท็บ", gj.ok && gj.history.length === brute, (gj.ok ? gj.history.length : gj) + " vs " + brute);
 
     // --- ตรวจวัน เขียว/เหลือง/แดง ---
     check("เขียว", plEvaluate_({ shipDate: "2026-11-15", installDate: "2026-11-19", adOn: "2026-11-20" }, 2).level === "green");
@@ -222,6 +241,7 @@ var PL_TEST_PHOTO_FOLDER_NAME = "[TEST] รูป Poster Logistics - ลบไ�
 function plUiTestOn() {
   plRequireAdminCaller_();
   var p = PropertiesService.getScriptProperties();
+  if (!PL_TEST_SPREADSHEET_DEFAULT) throw new Error("ยังไม่ได้ตั้ง Script Property PL_TEST_SPREADSHEET_ID");
   p.setProperty("PL_UI_TEST_SPREADSHEET_ID", PL_TEST_SPREADSHEET_DEFAULT);
   var it = DriveApp.getRootFolder().getFoldersByName(PL_TEST_PHOTO_FOLDER_NAME);
   var folder = it.hasNext() ? it.next() : DriveApp.getRootFolder().createFolder(PL_TEST_PHOTO_FOLDER_NAME);
@@ -540,22 +560,22 @@ function plTestPhaseDNotify() {
     var dayBefore = plDailyDigest_({ dryRun: true, today: plDateKey_(plAddDays_(X, -1)) });
     check("ก่อนวัน Ad on → ยังไม่ On air", dayBefore.onAir.indexOf(kO.signCode) < 0, dayBefore.onAir);
 
-    // โควต้าหมดในวันที่สลับ On air → เรื่อง "ส่ง Proof" ต้องไม่ตกหล่น
+    // โควต้าหมดในวันที่สลับ On air → เรื่อง "ส่ง Report" ต้องไม่ตกหล่น
     var q0 = plDailyDigest_({ today: X, quota: 0 });
     check("โควต้าหมด: ยังสลับเป็น On air ในชีต", job(RO).status === S.ON_AIR, job(RO).status);
     check("โควต้าหมด: ไม่ได้ส่ง และยังไม่ถือว่าส่งครบ", q0.mail.sent === 0 && q0.mail.skipped.length >= 1 && q0.complete === false, q0);
     check("ลง Log On air", logHas(RO, "On air (ระบบเปลี่ยนเมื่อถึงวัน Ad on)"), "");
     var real = plDailyDigest_({ today: X });
     out.push("INFO ส่งจริง: " + JSON.stringify(real.mail) + " · แผน " + JSON.stringify(real.plan));
-    check("รอบถัดไป: AE ยังได้เรื่องให้ส่ง Proof", has(real.plan, "ae@test", "On air แล้ว ยังไม่ได้กด"), real.plan);
+    check("รอบถัดไป: AE ยังได้เรื่องให้ส่ง Report", has(real.plan, "ae@test", "On air แล้ว ยังไม่ได้กด"), real.plan);
     check("ส่งจริง: อีเมลถูกส่งแทนไปที่เจ้าของสคริปต์ และถือว่าส่งครบ", real.mail.redirectedTo === me && real.mail.sent >= 1 && !real.mail.errors.length && real.complete === true, real.mail);
     var again = plDailyDigest_({ today: X });
     check("รันซ้ำวันเดียวกัน → ไม่ส่งซ้ำ", !!again.skipped && again.mail.sent === 0, again);
     var lj2 = job(RO);
     var rp = call(plMarkProofSent_, AE, lj2.rowKey, lj2.ver);
-    check("AE ส่ง Proof แล้ว → ปิดงาน", rp.ok && rp.job.status === S.CLOSED && !!rp.job.proofAt, rp);
+    check("AE ส่ง Report แล้ว → ปิดงาน", rp.ok && rp.job.status === S.CLOSED && !!rp.job.proofAt, rp);
     var afterClose = plDailyDigest_({ dryRun: true, today: plDateKey_(plAddDays_(X, 1)) });
-    check("ปิดงานแล้ว → ไม่เตือนส่ง Proof อีก", !has(afterClose.plan, "ae@test", "On air"), afterClose.plan);
+    check("ปิดงานแล้ว → ไม่เตือนส่ง Report อีก", !has(afterClose.plan, "ae@test", "On air"), afterClose.plan);
 
     // ===== สร้างงานทดสอบ แล้วตรวจ D-1 / เลยกำหนด / SLA / รายชั่วโมง =====
     var L = plSheet_(Config.SHEET_LOG), logFrom = L.getLastRow() + 1;
@@ -714,7 +734,7 @@ function plTestInstallEditTrigger() {
 
 // ทดสอบล็อกอินผู้ใช้แบบไม่มีอีเมล (อ่านแท็บ Users ของชีตที่ระบบชี้อยู่ ไม่เขียนชีต · ไม่ส่งอีเมล · ไม่แสดงรหัสผ่าน)
 function plTestNoMailLogin(username, password) {
-  plRequireAdminCaller_();               // รันจาก editor เท่านั้น (เดิมคนนอกเรียกได้ → เช็คได้ว่าชื่อผู้ใช้ไหนมีอยู่และเป็นบทบาทอะไร)
+  plRequireAdminCaller_();               // รันจาก editor เท่านั้น
   plClearUsersCache_();
   var u = typeof username === "string" && username ? username : "ae1", out = [];
   var id = plNoMailId_(u);

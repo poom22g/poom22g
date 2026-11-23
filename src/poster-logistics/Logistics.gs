@@ -4,7 +4,8 @@
  * กติกา: ไม่แตะคอลัมน์เดิม A–AP · หาคอลัมน์จากชื่อหัว (แถว 4) เสมอ · ทุกการเขียนผ่าน lock และลง Log
  * ===================================================================== */
 
-var PL_REAL_SPREADSHEET_ID_ = "YOUR_REAL_SPREADSHEET_ID";
+// ID ชีตจริงอ่านจาก Script Properties ชื่อ SPREADSHEET_ID (ตัวเดียวกับ Code.gs) ไม่ใส่ในโค้ด
+var PL_REAL_SPREADSHEET_ID_ = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID") || "";
 
 var Config = {
   SPREADSHEET_ID: PL_REAL_SPREADSHEET_ID_,
@@ -36,7 +37,7 @@ var Config = {
     INSTALLED: "ติดตั้งแล้ว",
     INSTALLED_MANUAL: "ติดตั้งแล้ว (ยืนยันมือ)",
     ON_AIR: "On air",
-    CLOSED: "ปิดงาน (ส่ง Proof แล้ว)"
+    CLOSED: "ปิดงาน (ส่ง Report แล้ว)"
   },
   CONDITIONS: ["ครบ", "เสียหาย"],
   INSTALL_TEAMS: ["Operation", "Supplier", "UPC 2", "Project"],   // "Project" มีใช้อยู่แล้วในชีต 2026
@@ -59,6 +60,7 @@ var Config = {
   NEW_TRANSPORT_COLS: { SHIP_TO: "จุดรับของ (default)", RECEIVER: "ผู้รับ", PHONE: "เบอร์ผู้รับ", BUFFER: "Buffer (วัน)" },
   USERS_HEADERS: ["email", "ชื่อ", "บทบาท"],
   LOG_HEADERS: ["เวลา", "email", "แถว", "ตำแหน่งป้าย", "คอลัมน์", "ค่าเดิม", "ค่าใหม่", "action"],
+  LOG_MONTH_HEADER: "เดือนงาน",   // คอลัมน์ที่ 9 ของ Log — appendLog_ เติมหัวให้เอง (ไม่อยู่ใน LOG_HEADERS เพื่อไม่ให้ setupSheets ฟ้องแท็บ Log เดิม)
 
   // วันหยุดที่ไม่นับเป็นวันทำการ (yyyy-MM-dd) — ใส่เฉพาะวันที่ตายตัว
   // วันพระ (มาฆะ/วิสาขะ/อาสาฬหะ/เข้าพรรษา) และวันหยุดชดเชย ต้องเติมเองตามประกาศแต่ละปี
@@ -92,6 +94,7 @@ function plSpreadsheetId_() {
 function plIsTestMode_() { return plSpreadsheetId_() !== PL_REAL_SPREADSHEET_ID_; }
 function plSpreadsheet_() {
   var id = plSpreadsheetId_();
+  if (!id) throw new Error("ยังไม่ได้ตั้ง Script Property SPREADSHEET_ID (Project Settings > Script properties)");
   if (!PL_SS_CACHE_[id]) PL_SS_CACHE_[id] = SpreadsheetApp.openById(id);
   return PL_SS_CACHE_[id];
 }
@@ -226,6 +229,14 @@ function plIsWorkday_(v) {
   return dow !== 0 && dow !== 6 && Config.HOLIDAYS.indexOf(plDateKey_(d)) < 0;
 }
 
+// ถ้าวันนั้นเป็นเสาร์/อาทิตย์/วันหยุด → ถอยไปวันทำการก่อนหน้า (ถอยไม่เกิน 14 วัน กันวนไม่จบ)
+function plPrevWorkday_(v) {
+  var d = parseDate_(v);
+  if (!d) return null;
+  for (var i = 0; i < 14 && !plIsWorkday_(d); i++) d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, 12, 0, 0);
+  return d;
+}
+
 // นับวันทำการหลังวันเริ่มไป n วัน (ไม่นับวันเริ่ม)
 function plAddWorkdays_(v, n) {
   var d = parseDate_(v);
@@ -271,11 +282,16 @@ function appendLog_(entries) {
   var ts = Utilities.formatDate(new Date(), Config.TZ, "yyyy-MM-dd HH:mm:ss");
   var rows = entries.map(function (e) {
     return [ts, e.email || "", e.row || "", e.sign || "", e.col || "",
-      plLogVal_(e.oldVal), plLogVal_(e.newVal), e.action || ""];
+      plLogVal_(e.oldVal), plLogVal_(e.newVal), e.action || "", e.month || ""];
   });
+  // คอลัมน์ที่ 9 "เดือนงาน" (yyyy-MM) ต่อท้ายหัวเดิม — ใช้จับประวัติ/วันสร้างงานด้วยป้าย + เดือน แม้แถวในแท็บ 2026 เลื่อน
+  var width = Config.LOG_HEADERS.length + 1;
+  if (sh.getMaxColumns() < width) sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
+  var head = sh.getRange(1, width);
+  if (String(head.getDisplayValue()).trim() === "") head.setValue(Config.LOG_MONTH_HEADER).setFontWeight("bold");
   var start = sh.getLastRow() + 1;
   if (start + rows.length - 1 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 100);
-  var rg = sh.getRange(start, 1, rows.length, Config.LOG_HEADERS.length);
+  var rg = sh.getRange(start, 1, rows.length, width);
   rg.setNumberFormat("@");
   rg.setValues(rows);
   return rows.length;
@@ -620,7 +636,7 @@ function plBackfillRun_(only) {
       appendLog_(res.plan.map(function (p) {
         return { email: who, row: p.row, sign: p.sign, col: PL_F.status, oldVal: "", newVal: p.status, action: "backfillStatus (ตั้งสถานะเริ่มต้น)" };
       }));
-      try { if (typeof clearDashboardCache === "function") clearDashboardCache(Config.SHEET_JOBS); } catch (e) { }
+      try { if (typeof clearDashboardCache_ === "function") clearDashboardCache_(Config.SHEET_JOBS); } catch (e) { }
     }
     return plBackfillReport_(res, true);
   });

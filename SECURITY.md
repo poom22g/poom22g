@@ -74,3 +74,11 @@ curl -sS -o /dev/null -w "%{http_code} %{url_effective}\n" -L "<URL /exec>"
 ```
 
 ต้องเด้งไป `accounts.google.com` (ไม่ใช่ 200 ที่หน้าแอป) = ข้อ 1 สำเร็จ
+
+## 5. เปิดให้บัญชีนอกโดเมน (เช่น @strateqgroup.com) — 2026-11-23
+
+- `appsscript.json` → `access: "ANYONE"` (ต้อง login บัญชี Google ก่อน · คนไม่ login ยังเข้าไม่ได้)
+- ข้อมูลทั้งหมดผ่าน `dashCall` / `plCall` (Access.gs, Auth.gs) → ต้องอยู่ในแท็บ Users เท่านั้นถึงเห็นข้อมูล
+- บัญชีนอกโดเมนที่ execute-as-owner มองไม่เห็นอีเมล → เข้าด้วย ชื่อผู้ใช้ + รหัสผ่าน หรือรหัส 6 หลักทางอีเมล
+- ปิดฟังก์ชันที่เรียกจากเว็บได้โดยไม่ตรวจสิทธิ์: `plDailyDigest`, `plHourlyNotify` (trigger เท่านั้น),
+  `plClearUsersCache`, `clearDashboardCache`, `awAuthorizeDrive`, `debugSignCount`, `plTestNoMailLogin` (เจ้าของ/Admin), `plOnEditB` (event จริงจากชีตเท่านั้น)

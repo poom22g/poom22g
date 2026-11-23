@@ -209,7 +209,7 @@ function plRpcTable_() {
     markReceived: { f: plMarkReceived_, n: 3 },
     markInstalled: { f: plMarkInstalled_, n: 3 },
     uploadJobPhoto: { f: plUploadJobPhoto_, n: 2 },
-    markProofSent: { f: plMarkProofSent_, n: 2 }
+    markProofSent: { f: plMarkProofSent_, n: 3 }
   };
 }
 
@@ -391,6 +391,8 @@ function plAuthLogin(login, password) {
     var email = plFindLogin_(lg);
     var ok = email ? (plPwCheck_(email, pw) || plSheetPwCheck_(email, pw)) : (plPwCheck_("nobody@invalid.test", pw), false);
     if (!ok) {
+      // สมัครไว้แล้วแต่ Admin ยังไม่อนุมัติ (บอกเฉพาะเมื่อรหัสผ่านตรงกับที่ตั้งตอนสมัคร) · ไม่นับเป็นกรอกผิด
+      if (!email && plSignupPwOk_(lg, pw)) throw plErr_("PENDING", "บัญชีนี้ส่งคำขอสมัครแล้ว กำลังรอ Admin อนุมัติ ยังเข้าสู่ระบบไม่ได้");
       cache.put(fk, String(fails + 1), PL_PW.LOCK_SEC);
       var left = PL_PW.FAIL_MAX - fails - 1;
       throw plErr_("INVALID", bad + (left > 0 ? " (เหลืออีก " + left + " ครั้ง)" : " · ล็อกชั่วคราว"));
@@ -442,6 +444,7 @@ function plAdminUsers(tok) {
     plAdminUser_(tok);
     return {
       ok: true, roles: Config.ROLES,
+      signups: plSignupAll_().map(plSignupPublic_), signupRoles: plSignupRoles_(),     // คำขอสมัครที่รออนุมัติ (ไม่มีแฮชรหัสผ่าน)
       users: plUserRows_().map(function (r) { return { email: r.email, name: r.name, role: r.role, username: r.username, status: r.status, hasPassword: plPwHas_(r.email), roleOk: Config.ROLES.indexOf(r.role) >= 0 }; })
     };
   });
@@ -501,6 +504,170 @@ function plAdminResetPassword(tok, email) {
     CacheService.getScriptCache().remove(plAuthKey_("pl_pwf_", em));
     withLock_(function () { appendLog_([{ email: admin.email, action: "รีเซ็ตรหัสผ่านผู้ใช้ (Admin)", newVal: em }]); });
     return { ok: true, email: em, password: password };
+  });
+}
+
+/* ---------------------------------------------------------------------
+ * สมัครเข้าใช้งานเอง (ปุ่มที่หน้าเข้าสู่ระบบ) → รอ Admin อนุมัติ
+ *  - คำขอเก็บใน Script Properties (PL_SIGNUP_<รหัส>) · ไม่แตะแท็บ Users จนกว่า Admin จะอนุมัติ
+ *    → บัญชีที่ยังไม่อนุมัติไม่ผ่านการตรวจสิทธิ์จุดใดเลย (ทุกจุดอ่านจาก Users)
+ *  - รหัสผ่านเก็บเป็นแฮชในคำขอ ไม่เขียนลงชีต · อนุมัติแล้วย้ายแฮชไปเป็นรหัสผ่านของบัญชี
+ *  - สมัครเป็น Admin ไม่ได้ · จำกัดจำนวนคำขอค้างและจำนวนคำขอต่อชั่วโมง
+ * ------------------------------------------------------------------- */
+var PL_SIGNUP = { PREFIX: "PL_SIGNUP_", MAX_PENDING: 30, HOUR_MAX: 10, MAIL_RESERVE: 50 };   // MAIL_RESERVE = โควต้าอีเมลที่กันไว้ให้อีเมลสรุปงาน ไม่ใช้กับแจ้งคำขอสมัคร
+var PL_SIGNUP_NAME_RE = /^[A-Za-z฀-๿][A-Za-z฀-๿ .'()\-]{1,59}$/;   // ขึ้นต้นด้วยตัวอักษรเสมอ (กันค่าที่ชีตตีความเป็นสูตร)
+var PL_SIGNUP_EMAIL_RE = /^[a-z0-9]/;                                                  // อีเมลต้องขึ้นต้นด้วยตัวอักษร/ตัวเลข (เหตุผลเดียวกัน)
+var PL_SIGNUP_ID_RE = /^[a-f0-9]{16}$/;
+
+function plSignupRoles_() { return Config.ROLES.filter(function (r) { return r !== "Admin"; }); }
+
+// คำขอทั้งหมด เรียงตามเวลา (มีแฮชรหัสผ่านติดมาด้วย — ห้ามส่งออกหน้าเว็บตรง ๆ ให้ผ่าน plSignupPublic_)
+function plSignupAll_() {
+  var all = PropertiesService.getScriptProperties().getProperties(), out = [];
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf(PL_SIGNUP.PREFIX) !== 0) return;
+    try { var q = JSON.parse(all[k]); q.id = k.slice(PL_SIGNUP.PREFIX.length); out.push(q); } catch (e) { }
+  });
+  out.sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
+  return out;
+}
+function plSignupPublic_(q) {
+  return { id: q.id, name: q.name, username: q.username, email: q.email || "", role: q.role, google: q.g || "",
+    at: q.at ? Utilities.formatDate(new Date(q.at), Config.TZ, "dd/MM/yyyy HH:mm") : "" };
+}
+function plSignupCount_() {
+  return PropertiesService.getScriptProperties().getKeys().filter(function (k) { return k.indexOf(PL_SIGNUP.PREFIX) === 0; }).length;
+}
+// ใช้ตอนล็อกอินไม่ผ่าน: ชื่อผู้ใช้/อีเมลนี้มีคำขอค้างอยู่ และรหัสผ่านตรงกับที่ตั้งตอนสมัครไหม
+function plSignupPwOk_(login, pw) {
+  var hit = null;
+  plSignupAll_().forEach(function (q) { if (!hit && (q.username === login || (q.email && q.email === login))) hit = q; });
+  return !!hit && plAuthSame_(hit.h, plPwHash_(hit.s, pw, hit.n));
+}
+// ชื่อผู้ใช้/อีเมล/รหัสตัวตนนี้ซ้ำกับแถวในแท็บ Users ไหม (นับทุกแถว รวมบัญชีที่ระงับ)
+function plSignupTaken_(username, email) {
+  var identity = email || plNoMailId_(username), taken = false;
+  plUserRows_().forEach(function (r) { if (r.username === username || r.email === identity || r.email === plNoMailId_(username)) taken = true; });
+  return taken;
+}
+
+// หน้าเว็บเรียก (ยังไม่ได้เข้าสู่ระบบ): ส่งคำขอสมัคร  o = { name, username, email (เว้นได้), role, password }
+function plAuthSignup(o) {
+  return plApi_(function () {
+    o = o || {};
+    var name = String(o.name == null ? "" : o.name).replace(/\s+/g, " ").trim();
+    if (!PL_SIGNUP_NAME_RE.test(name)) throw plErr_("INVALID", "กรอกชื่อ-นามสกุล 2–60 ตัวอักษร (ตัวอักษรไทย/อังกฤษ เว้นวรรค จุด ขีด วงเล็บ)");
+    var username = String(o.username == null ? "" : o.username).trim().toLowerCase();
+    if (!PL_USERNAME_RE.test(username)) throw plErr_("INVALID", "ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 . _ - ยาว 3–30 ตัว และขึ้นต้นด้วยตัวอักษรหรือตัวเลข");
+    var rawEmail = String(o.email == null ? "" : o.email).trim();
+    var email = rawEmail ? plAuthNormEmail_(rawEmail) : "";
+    if (rawEmail && (!email || !PL_SIGNUP_EMAIL_RE.test(email))) throw plErr_("INVALID", "รูปแบบอีเมลไม่ถูกต้อง (ถ้าไม่มีอีเมลให้เว้นว่าง)");
+    var role = String(o.role == null ? "" : o.role).trim();
+    if (plSignupRoles_().indexOf(role) < 0) throw plErr_("INVALID", "เลือกบทบาท: " + plSignupRoles_().join(" / "));
+    var pw = String(o.password == null ? "" : o.password);
+    if (pw.length < PL_PW.MIN_LEN) throw plErr_("INVALID", "รหัสผ่านต้องยาวอย่างน้อย " + PL_PW.MIN_LEN + " ตัวอักษร");
+    if (pw.length > PL_PW.MAX_LEN) throw plErr_("INVALID", "รหัสผ่านยาวเกินไป");
+    if (/^(.)\1+$/.test(pw) || pw.toLowerCase() === username) throw plErr_("INVALID", "รหัสผ่านง่ายเกินไป");
+    var cache = CacheService.getScriptCache(), hk = "pl_signup_hour_v1";
+    var n = Number(cache.get(hk) || 0);
+    if (n >= PL_SIGNUP.HOUR_MAX) throw plErr_("TOO_MANY", "มีคำขอสมัครเข้ามามากในช่วงนี้ กรุณาลองใหม่ภายหลัง หรือแจ้ง Admin โดยตรง");
+    var google = "";
+    try { google = String(Session.getActiveUser().getEmail() || "").trim().toLowerCase(); } catch (e) { }
+    var salt = Utilities.getUuid(), hash = plPwHash_(salt, pw, PL_PW.ROUNDS);     // คำนวณแฮชก่อนเข้า lock
+    withLock_(function () {
+      if (plSignupTaken_(username, email)) throw plErr_("INVALID", "ชื่อผู้ใช้หรืออีเมลนี้มีในระบบแล้ว · ถ้าเป็นบัญชีของคุณให้เข้าสู่ระบบ หรือแจ้ง Admin รีเซ็ตรหัสผ่าน");
+      var pend = plSignupAll_();
+      pend.forEach(function (q) {
+        if (q.username === username || (email && q.email === email)) throw plErr_("INVALID", "มีคำขอสมัครด้วยชื่อผู้ใช้หรืออีเมลนี้รออนุมัติอยู่แล้ว กรุณารอ Admin");
+      });
+      if (pend.length >= PL_SIGNUP.MAX_PENDING) throw plErr_("TOO_MANY", "มีคำขอรออนุมัติค้างอยู่จำนวนมาก กรุณาแจ้ง Admin โดยตรง");
+      var id = Utilities.getUuid().replace(/-/g, "").slice(0, 16);
+      PropertiesService.getScriptProperties().setProperty(PL_SIGNUP.PREFIX + id,
+        JSON.stringify({ name: name, username: username, email: email, role: role, g: google, s: salt, n: PL_PW.ROUNDS, h: hash, at: Date.now() }));
+      appendLog_([{ email: email || plNoMailId_(username), action: "ส่งคำขอสมัครเข้าใช้งาน (รออนุมัติ)", newVal: name + " · " + role + " · " + username }]);
+    });
+    cache.put(hk, String(n + 1), 3600);
+    console.log("คำขอสมัครใหม่: " + username + " (" + role + ")");
+    plSignupNotifyAdmins_({ name: name, username: username, email: email, role: role, g: google });   // ส่งไม่ได้ก็ไม่ทำให้การสมัครล้มเหลว
+    return { ok: true, username: username, message: "ส่งคำขอสมัครแล้ว ✔ รอ Admin อนุมัติ จากนั้นเข้าสู่ระบบด้วยชื่อผู้ใช้ " + username + " และรหัสผ่านที่ตั้งไว้" };
+  });
+}
+
+// แจ้ง Admin ทุกคนที่มีอีเมลจริงในแท็บ Users ว่ามีคำขอสมัครใหม่ (เรียกหลังบันทึกคำขอแล้ว นอก lock)
+// · ไม่ throw: ส่งไม่ได้ (ไม่มีผู้รับ / โควต้าไม่พอ / MailApp ผิดพลาด) การสมัครยังสำเร็จ และผลการส่งลง Log 1 แถวเสมอ
+// · ใช้กล่องจดหมายเดียวกับ Notify.gs → โหมดทดสอบ/NOTIFY_REDIRECT_TO ส่งแทนไปที่ปลายทางทดสอบเหมือนอีเมลอื่น
+// · ไม่มีรหัสผ่านหรือแฮชในอีเมล
+function plSignupNotifyAdmins_(q) {
+  var res = { sent: 0, sentTo: [], skipped: [], blocked: "", redirectedTo: "", recipients: [], errors: [] }, notes = [];
+  try {
+    var admins = plEmailsByRole_(["Admin"]);
+    if (!admins.length) {
+      notes.push("ไม่มี Admin ที่มีอีเมลจริงในแท็บ Users จึงไม่มีผู้รับ");
+    } else {
+      var box = plMailbox_();
+      box.add(admins, "คำขอสมัครรออนุมัติ", "<b>" + plEsc_(q.name) + "</b> · บทบาทที่ขอ " + plEsc_(q.role) + " · ชื่อผู้ใช้ " + plEsc_(q.username) +
+        " · " + (q.email ? "อีเมล " + plEsc_(q.email) : "ไม่มีอีเมล") + (q.g ? " · บัญชี Google ที่ใช้สมัคร " + plEsc_(q.g) : ""));
+      var room = Math.max(0, MailApp.getRemainingDailyQuota() - PL_SIGNUP.MAIL_RESERVE);
+      if (!room) notes.push("โควต้าอีเมลของระบบวันนี้เหลือน้อย จึงไม่ส่งแจ้งเตือนคำขอสมัคร");
+      res = plSendMailbox_(box, "มีคำขอสมัครเข้าใช้งานใหม่: " + q.name,
+        "มีผู้ส่งคำขอสมัครเข้าใช้งานระบบ กรุณาเปิดหน้า Poster Logistics แล้วกดปุ่ม ผู้ใช้ เพื่ออนุมัติหรือปฏิเสธ", { quota: room });
+    }
+  } catch (e) {
+    notes.push("แจ้ง Admin ไม่สำเร็จ: " + (e && e.message ? e.message : e));
+  }
+  try { plLogNotify_("แจ้ง Admin: คำขอสมัครใหม่ (" + q.username + ")", { mail: res, notes: notes }); }
+  catch (e2) { console.log("ลง Log การแจ้งคำขอสมัครไม่สำเร็จ: " + (e2 && e2.message ? e2.message : e2)); }
+  return res;
+}
+
+function plSignupKey_(id) {
+  var s = String(id == null ? "" : id);
+  if (!PL_SIGNUP_ID_RE.test(s)) throw plErr_("INVALID", "รหัสคำขอไม่ถูกต้อง");
+  return PL_SIGNUP.PREFIX + s;
+}
+
+// Admin อนุมัติคำขอ → เพิ่มแถวในแท็บ Users (สถานะ active) + ย้ายแฮชรหัสผ่านไปเป็นของบัญชี · role เว้นได้ = ใช้บทบาทที่ผู้สมัครขอ
+function plAdminApproveSignup(tok, id, role) {
+  return plApi_(function () {
+    var admin = plAdminUser_(tok), key = plSignupKey_(id), user = null;
+    withLock_(function () {
+      var p = PropertiesService.getScriptProperties(), raw = p.getProperty(key);
+      if (!raw) throw plErr_("NOT_FOUND", "ไม่พบคำขอนี้ (อาจถูกอนุมัติหรือปฏิเสธไปแล้ว)");
+      var q = JSON.parse(raw);
+      var r2 = String(role == null ? "" : role).trim() || q.role;
+      if (plSignupRoles_().indexOf(r2) < 0) throw plErr_("INVALID", "บทบาทต้องเป็น " + plSignupRoles_().join(" / ") + " (ตั้งเป็น Admin ได้ภายหลังจากปุ่มแก้ไข)");
+      var identity = q.email || plNoMailId_(q.username);
+      if (!identity || !PL_SIGNUP_NAME_RE.test(String(q.name || ""))) throw plErr_("INVALID", "ข้อมูลในคำขอไม่ครบ กรุณาปฏิเสธแล้วให้สมัครใหม่");
+      if (plSignupTaken_(q.username, q.email)) throw plErr_("INVALID", "ชื่อผู้ใช้หรืออีเมลนี้มีในแท็บ Users แล้ว · ปฏิเสธคำขอนี้ หรือแก้ผู้ใช้เดิมแทน");
+      var sh = plSheet_(Config.SHEET_USERS);
+      if (!String(sh.getRange(1, 4).getDisplayValue() || "").trim()) sh.getRange(1, 4).setValue("ชื่อผู้ใช้").setFontWeight("bold");
+      if (!String(sh.getRange(1, 5).getDisplayValue() || "").trim()) sh.getRange(1, 5).setValue("สถานะ").setFontWeight("bold");
+      var row = Math.max(sh.getLastRow(), 1) + 1;
+      sh.getRange(row, 1, 1, 5).setValues([[q.email || "", q.name, r2, q.username, "active"]]);     // ไม่มีอีเมล → คอลัมน์ A ว่าง (ตัวตน = ชื่อผู้ใช้)
+      p.setProperty(plPwKey_(identity), JSON.stringify({ s: q.s, n: q.n, h: q.h, at: Date.now() }));
+      p.setProperty(plPwMinKey_(identity), String(Date.now()));
+      p.deleteProperty(key);
+      appendLog_([{ email: admin.email, row: row, action: "อนุมัติคำขอสมัคร (Admin)", newVal: identity + " · " + r2 + " · " + q.username }]);
+      user = { email: identity, name: q.name, role: r2, username: q.username, status: "active", hasPassword: true, roleOk: true };
+    });
+    plClearUsersCache_();
+    return { ok: true, user: user };
+  });
+}
+
+// Admin ปฏิเสธคำขอ → ลบคำขอทิ้ง (ไม่มีอะไรถูกเขียนลงแท็บ Users)
+function plAdminRejectSignup(tok, id) {
+  return plApi_(function () {
+    var admin = plAdminUser_(tok), key = plSignupKey_(id);
+    withLock_(function () {
+      var p = PropertiesService.getScriptProperties(), raw = p.getProperty(key);
+      if (!raw) throw plErr_("NOT_FOUND", "ไม่พบคำขอนี้ (อาจถูกอนุมัติหรือปฏิเสธไปแล้ว)");
+      var q = {};
+      try { q = JSON.parse(raw); } catch (e) { }
+      p.deleteProperty(key);
+      appendLog_([{ email: admin.email, action: "ปฏิเสธคำขอสมัคร (Admin)", oldVal: String(q.name || "") + " · " + String(q.role || "") + " · " + String(q.username || "") }]);
+    });
+    return { ok: true };
   });
 }
 
